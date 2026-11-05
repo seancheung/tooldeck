@@ -19,7 +19,7 @@ function loadComponent(path, imports = {}) {
 const uiChinese = JSON.parse(fs.readFileSync('src/locales/ui.zh-CN.json', 'utf8'));
 const i18n = loadComponent('src/i18n.ts', { './locales/ui.zh-CN.json': uiChinese });
 const { FieldForm } = loadComponent('src/FieldForm.tsx', {
-  './i18n': i18n, '@tauri-apps/plugin-dialog': {}, '@phosphor-icons/react': {}
+  './paramForm': loadComponent('src/paramForm.ts'), './i18n': i18n, '@tauri-apps/plugin-dialog': {}, '@phosphor-icons/react': {}
 });
 
 test('field controls use the app language and preserve manifest strings', () => {
@@ -43,6 +43,27 @@ test('empty matches missing, null and empty strings after resolving defaults', (
   for (const name of [' ', 'text', 0, false]) assert.equal(visible({ name }), false);
   fields.name.schema.default = 'default';
   assert.equal(visible({}), false);
+});
+
+test('a hook patch changes values, choices and visibility together without mutating the previous form', () => {
+  const {newForm, applyPatch, formFields} = loadComponent('src/paramForm.ts');
+  const fields = {
+    mode: {schema:{type:'boolean'}},
+    file: {schema:{type:'string'}, ui:{component:'select'}, availableWhen:{op:'eq', key:'mode', value:true}},
+  };
+  const initial = newForm({mode:true, file:'a'});
+  const choices = [{value:'b',label:'Second'}];
+  assert.throws(() => applyPatch(initial, {mode:{value:false},file:{options:choices}}));
+  assert.deepEqual(initial.values, {mode:true,file:'a'});
+  let form = applyPatch(initial, {file:{options:choices,value:'b',visible:true}});
+  const markup = () => renderToStaticMarkup(React.createElement(FieldForm, {
+    fields:formFields(fields,form), values:form.values, onChange() {}
+  }));
+  assert.match(markup(), /selected="">Second/);
+  form = applyPatch(form, {mode:{value:false}});
+  assert.ok(!markup().includes('field-file'));
+  form = applyPatch(form, {mode:{value:true},file:{options:[],visible:false,unset:true}});
+  assert.ok(!Object.hasOwn(form.values,'file') && !markup().includes('field-file'));
 });
 
 test('select displays labels, preserves enum indices and typed selection, and falls back to values', () => {
@@ -83,4 +104,11 @@ test('native diagnostics preserve argument order and literal argument text', () 
   assert.equal(nativeMessage('zh-CN', english), template.replace('{0}', '2.0').replace('{1}', '1.0'));
   assert.equal(nativeMessage('zh-CN', 'Entry Cancelled: details'),
     catalog['Entry {0}: {1}'].replace('{0}', 'Cancelled').replace('{1}', 'details'));
+});
+
+test('collapsible sections preserve whitespace across interleaved output and isolate runs', () => {
+  const {appendOutputEvent} = loadComponent('src/outputEvents.ts');
+  const part = (runId,id,text) => ({runId,type:'details',payload:{id,title:id,text}});
+  const events = [part('1','a','One'), part('1','b','Other'), part('2','a','New run'), part('1','a',' '), part('1','a','two\n')].reduce(appendOutputEvent,[]);
+  assert.deepEqual(events.map(e => e.payload.text), ['One two\n','Other','New run']);
 });

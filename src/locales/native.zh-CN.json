@@ -1,4 +1,11 @@
 {
+  "Invalid hook: {0}": "钩子声明无效：{0}",
+  "Invalid hook entry: {0}": "钩子入口无效：{0}",
+  "Invalid paramKeys for hook {0}": "钩子 {0} 的 paramKeys 无效",
+  "Hook not found": "找不到钩子",
+  "Missing changedKeys": "缺少变更字段列表",
+  "Hook does not match these parameters": "参数变化与钩子声明不匹配",
+  "Duplicate run ID": "运行 ID 重复",
   "Cancelled": "已取消",
   "Deleted": "已删除",
   "Run completed": "执行完成",

@@ -34,6 +34,9 @@ async fn node_import_install_run_uninstall() {
     let app: runner::EventSink = Arc::new(move |run, kind, payload| sink.lock().unwrap().push(json!({"runId":run,"type":kind,"payload":payload})));
     let (config,id)=fixture("node-example"); let dir=storage::tool_dir(&config,&id).unwrap();
     assert!(!storage::list(&config).unwrap()[0].installed);
+    let lifecycle = |hook: &str, event: &str| json!({"hookId":hook,"event":event,"values":{}});
+    assert!(runner::job(&app,&config,&id,"uninstalled-open","hook",Some("write"),
+        lifecycle("onOpen","actionOpen"),flag()).await.is_err());
     fs::create_dir_all(dir.join("test-package")).unwrap();
     fs::write(dir.join("test-package/package.json"),r#"{"name":"tooldeck-test-package","version":"1.0.0","main":"index.js"}"#).unwrap();
     fs::write(dir.join("test-package/index.js"),"module.exports = 'dependency loaded';").unwrap();
@@ -42,9 +45,36 @@ async fn node_import_install_run_uninstall() {
     fs::write(dir.join("preview.mjs"),format!("import value from 'tooldeck-test-package';\nif(value !== 'dependency loaded') throw new Error('dependency missing');\n{original}")).unwrap();
     runner::job(&app,&config,&id,"install-node","install",None,json!({}),flag()).await.unwrap();
     assert!(storage::list(&config).unwrap()[0].installed);
+    for (hook, event) in [("onOpen","actionOpen"),("onClose","actionClose")] {
+        runner::job(&app,&config,&id,event,"hook",Some("write"),lifecycle(hook,event),flag()).await.unwrap();
+        assert!(events.lock().unwrap().iter().any(|e| e["runId"] == event && e["payload"]["message"] == format!("{event}: write")));
+    }
     write_json(&dir.join(".tooldeck/settings.json"),&json!({"prefix":"Hi","uppercase":false})).unwrap();
     runner::job(&app,&config,&id,"run-node","run",Some("preview"),json!({"name":"Montréal"}),flag()).await.unwrap();
     assert!(events.lock().unwrap().iter().any(|e| e["type"]=="output" && e["payload"]["message"]=="Hi, Montréal!"));
+    // The write form may still be missing its required destination when name loses focus.
+    runner::job(&app,&config,&id,"hook-node","hook",Some("write"),
+        json!({"hookId":"previewName","changedKeys":["name"],"values":{"name":"Ada"}}),flag()).await.unwrap();
+    let hook_events: Vec<_> = events.lock().unwrap().iter().filter(|e| e["runId"]=="hook-node").cloned().collect();
+    assert_eq!(hook_events.len(), 2);
+    assert_eq!(hook_events[0]["type"], "clearOutput");
+    assert_eq!(hook_events[1]["payload"]["message"], "Name for this greeting: Ada");
+    assert!(runner::job(&app,&config,&id,"hook-unmatched","hook",Some("write"),
+        json!({"hookId":"previewName","changedKeys":["destination"],"values":{}}),flag()).await.is_err());
+    let folder = dir.join("inputs");
+    fs::create_dir(&folder).unwrap();
+    fs::write(folder.join("sample.txt"), "example").unwrap();
+    runner::job(&app,&config,&id,"discover","hook",Some("inspectFolder"),
+        json!({"hookId":"listFiles","changedKeys":["folder"],"values":{"folder":folder}}),flag()).await.unwrap();
+    let patch = events.lock().unwrap().iter().find(|e| e["runId"]=="discover" && e["type"]=="updateParams").unwrap()["payload"].clone();
+    assert_eq!(patch["sourceFile"]["value"], "sample.txt");
+    let overrides = json!({"sourceFile":{"options":patch["sourceFile"]["options"],"visible":true}});
+    let run_file = |name: &str| runner::job_with_form(&app,&config,&id,"inspect","run",Some("inspectFolder"),
+        json!({"folder":folder,"sourceFile":name}),overrides.clone(),flag());
+    run_file("sample.txt").await.unwrap();
+    assert!(run_file("unlisted.txt").await.is_err());
+    runner::job_with_form(&app,&config,&id,"empty-folder","run",Some("inspectFolder"),
+        json!({"folder":folder}),json!({"sourceFile":{"visible":false,"unset":true,"options":[]}}),flag()).await.unwrap();
     runner::job(&app,&config,&id,"uninstall-node","uninstall",None,json!({}),flag()).await.unwrap();
     assert!(!dir.join("node_modules").exists()); assert!(!storage::list(&config).unwrap()[0].installed);
     assert!(dir.join("preview.mjs").exists()); assert_eq!(read_json(&dir.join(".tooldeck/settings.json"))["prefix"],"Hi");
@@ -109,13 +139,20 @@ fn import_preview_and_upgrade_confirmation() {
     let dir = storage::tool_dir(&config, &id).unwrap();
     let original = fs::read_to_string(dir.join("manifest.yaml")).unwrap();
     let current = read_manifest(&dir).unwrap();
+    let lock = |version: &str| json!({"version": version, "lockfileVersion": 3, "packages": {"": {"version": version}}});
+    write_json(&dir.join("package-lock.json"), &lock(&current.version)).unwrap();
+    fs::create_dir_all(dir.join("node_modules")).unwrap();
+    fs::write(dir.join("node_modules/retained"), "installed").unwrap();
+    write_json(&dir.join(".tooldeck/installed.json"), &json!({"version":current.version})).unwrap();
     let archive = Path::new(&config.data_dir).join("upgrade.zip");
     let mut zip = zip::ZipWriter::new(fs::File::create(&archive).unwrap());
     for item in fs::read_dir(&dir).unwrap() {
         let item = item.unwrap();
         if item.path().is_file() {
             zip.start_file(item.file_name().to_string_lossy(), zip::write::SimpleFileOptions::default()).unwrap();
-            let data = if item.file_name() == "manifest.yaml" { original.replace(&current.version, "99.0.0").into_bytes() } else { fs::read(item.path()).unwrap() };
+            let data = if item.file_name() == "manifest.yaml" { original.replace(&format!("version: \"{}\"", current.version), "version: \"99.0.0\"").into_bytes() }
+                else if item.file_name() == "package-lock.json" { serde_json::to_vec(&lock("99.0.0")).unwrap() }
+                else { fs::read(item.path()).unwrap() };
             zip.write_all(&data).unwrap();
         }
     }
@@ -134,6 +171,8 @@ fn import_preview_and_upgrade_confirmation() {
     let result = storage::import_zip_confirmed(&config, path, Some(&preview)).unwrap();
     assert!(!result.needs_confirmation);
     assert_eq!(read_manifest(&dir).unwrap().version, "99.0.0");
+    assert!(storage::is_installed(&dir, &result.manifest));
+    assert!(dir.join("node_modules/retained").is_file());
     fs::remove_dir_all(&config.data_dir).unwrap();
 }
 
@@ -190,7 +229,7 @@ fn saved_locale_drives_catalog_and_document_variants() {
     let example: Value = serde_yaml::from_str(include_str!("../../examples/python-example/manifest.yaml")).unwrap();
     for (locale, name, title, path) in [
         ("en", "Python Example", "User guide", "README.md"),
-        ("zh-CN", example["name"]["zh-CN"].as_str().unwrap(), example["docs"][0]["title"].as_str().unwrap(), "README.zh.md"),
+        ("zh-CN", example["name"]["zh-CN"].as_str().unwrap(), example["docs"].as_array().unwrap().iter().find(|doc| doc["locale"] == "zh-CN").unwrap()["title"].as_str().unwrap(), "README.zh.md"),
     ] {
         config.locale = locale.into();
         write_json(&file, &config).unwrap();

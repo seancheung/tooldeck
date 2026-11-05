@@ -1,5 +1,6 @@
 mod locale;
 mod model;
+mod param_patch;
 mod storage;
 mod runner;
 mod window_state;
@@ -15,7 +16,7 @@ use tauri_plugin_opener::OpenerExt;
 pub struct AppState {
     config_file: PathBuf,
     config: Mutex<Config>,
-    jobs: Mutex<HashMap<String, (String, Arc<AtomicBool>)>>,
+    jobs: Mutex<HashMap<String, (String, String, Arc<AtomicBool>)>>,
 }
 impl AppState { fn config(&self) -> Result<Config> { Ok(self.config.lock().map_err(error)?.clone()) } }
 
@@ -102,20 +103,28 @@ fn open_target(app: tauri::AppHandle, target: String) -> Result<()> {
 }
 #[tauri::command]
 fn cancel_job(state: State<AppState>, run_id: String) -> Result<()> {
-    if let Some((_, flag)) = state.jobs.lock().map_err(error)?.get(&run_id) { flag.store(true, Ordering::SeqCst); }
+    if let Some((_, _, flag)) = state.jobs.lock().map_err(error)?.get(&run_id) { flag.store(true, Ordering::SeqCst); }
     Ok(())
 }
 #[tauri::command]
-async fn execute_job(app: tauri::AppHandle, state: State<'_, AppState>, id: String, run_id: String, operation: String, action_id: Option<String>, params: Option<Value>) -> Result<String> {
+async fn execute_job(app: tauri::AppHandle, state: State<'_, AppState>, id: String, run_id: String, operation: String, action_id: Option<String>, params: Option<Value>, form_overrides: Option<Value>) -> Result<String> {
     let flag = Arc::new(AtomicBool::new(false));
     {
         let mut jobs = state.jobs.lock().map_err(error)?;
-        if jobs.values().any(|(tool,_)| tool == &id) { return Err("This tool is busy".into()); }
-        jobs.insert(run_id.clone(), (id.clone(), flag.clone()));
+        if jobs.contains_key(&run_id) { return Err("Duplicate run ID".into()); }
+        for (tool, active, _) in jobs.values() {
+            if tool != &id { continue; }
+            // Hooks may overlap each other and an action, but never an environment change.
+            match (operation.as_str(), active.as_str()) {
+                ("hook", "hook" | "run") | ("run", "hook") => (),
+                _ => return Err("This tool is busy".into()),
+            }
+        }
+        jobs.insert(run_id.clone(), (id.clone(), operation.clone(), flag.clone()));
     }
     let config = state.config()?;
     let sink: runner::EventSink = Arc::new(move |run, kind, payload| { let _ = app.emit("tooldeck:event", serde_json::json!({"runId":run,"type":kind,"payload":payload})); });
-    let result = runner::job(&sink, &config, &id, &run_id, &operation, action_id.as_deref(), params.unwrap_or(serde_json::json!({})), flag).await;
+    let result = runner::job_with_form(&sink, &config, &id, &run_id, &operation, action_id.as_deref(), params.unwrap_or(serde_json::json!({})), form_overrides.unwrap_or(serde_json::json!({})), flag).await;
     state.jobs.lock().map_err(error)?.remove(&run_id);
     result
 }

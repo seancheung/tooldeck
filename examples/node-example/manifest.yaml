@@ -86,6 +86,37 @@ actions:
           kind: file
           mustExist: false
 
+  inspectFolder:
+    name: Inspect a folder
+    entry: inspect-folder.mjs
+    params:
+      folder:
+        schema: { type: string }
+        required: true
+        ui: { label: Folder, component: directory }
+        path: { kind: directory, mustExist: true }
+      sourceFile:
+        schema: { type: string }
+        required: true
+        ui: { label: File, component: select }
+        availableWhen: { op: notNull, key: folder }
+
+hooks:
+  onOpen:
+    event: actionOpen
+    entry: lifecycle.mjs
+  onClose:
+    event: actionClose
+    entry: lifecycle.mjs
+  listFiles:
+    event: paramsChange
+    paramKeys: [folder]
+    entry: list-files.mjs
+  previewName:
+    event: paramsChange
+    paramKeys: [name]
+    entry: preview-name.mjs
+
 docs:
   - id: overview
     title: User guide

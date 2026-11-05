@@ -76,16 +76,20 @@ async fn npm_command(config: &Config, dir: &Path) -> Result<Command> {
     cmd.env("PATH", std::env::join_paths(paths).map_err(error)?);
     Ok(cmd)
 }
+#[cfg(test)]
 pub async fn job(app: &EventSink, config: &Config, id: &str, run: &str, operation: &str, action_id: Option<&str>, params: Value, flag: Arc<AtomicBool>) -> Result<String> {
+    job_with_form(app, config, id, run, operation, action_id, params, json!({}), flag).await
+}
+pub async fn job_with_form(app: &EventSink, config: &Config, id: &str, run: &str, operation: &str, action_id: Option<&str>, params: Value, overrides: Value, flag: Arc<AtomicBool>) -> Result<String> {
     let log = Arc::new(crate::run_logs::RunLog::new(config)?);
     log.record(run, "started", &json!({"toolId":id,"operation":operation,"actionId":action_id}));
     let downstream = app.clone();
     let writer = log.clone();
     let sink: EventSink = Arc::new(move |run, kind, payload| {
-        writer.record(run, kind, &payload);
+        if kind != "updateParams" { writer.record(run, kind, &payload); }
         downstream(run, kind, payload);
     });
-    let result = job_inner(&sink, config, id, run, operation, action_id, params, flag).await;
+    let result = job_inner(&sink, config, id, run, operation, action_id, params, overrides, flag).await;
     let status = match &result { Ok(_) => "success", Err(e) if e == "Cancelled" => "cancelled", Err(_) => "error" };
     log.record(run, "finished", &json!({"status":status,"message":result.as_ref().map(|v| v.as_str()).unwrap_or_else(|e| e.as_str())}));
     log.finish()?;
@@ -97,7 +101,7 @@ impl Drop for RunTemp {
     fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
 }
 
-async fn job_inner(app: &EventSink, config: &Config, id: &str, run: &str, operation: &str, action_id: Option<&str>, params: Value, flag: Arc<AtomicBool>) -> Result<String> {
+async fn job_inner(app: &EventSink, config: &Config, id: &str, run: &str, operation: &str, action_id: Option<&str>, params: Value, overrides: Value, flag: Arc<AtomicBool>) -> Result<String> {
     let dir = storage::tool_dir(config, id)?;
     if operation == "delete" {
         let config = config.clone(); let id = id.to_owned();
@@ -146,21 +150,38 @@ async fn job_inner(app: &EventSink, config: &Config, id: &str, run: &str, operat
         }
         return Ok("Installation completed".into());
     }
-    if operation != "run" { return Err("Unknown operation".into()); }
+    if operation != "run" && operation != "hook" { return Err("Unknown operation".into()); }
     let action_id = action_id.ok_or("Select an action")?;
     let action = m.actions.get(action_id).ok_or("Action not found")?;
     if !storage::is_installed(&dir, &m) { return Err("Install the tool environment first".into()); }
     let fields = action.get("params").and_then(Value::as_object).cloned().unwrap_or_default();
-    let params = values(&fields, &params, true)?;
-    let settings = values(&m.settings, &read_json(&dir.join(".tooldeck/settings.json")), true)?;
+    let effective = crate::param_patch::form_fields(&fields, &overrides)?;
+    let (entry_name, event, params) = if operation == "hook" {
+        let hook = params["hookId"].as_str().and_then(|id| m.hooks.get(id)).ok_or("Hook not found")?;
+        if params["event"].as_str().unwrap_or("paramsChange") != hook.event { return Err("Hook event mismatch".into()); }
+        let mut event = json!({"type":hook.event});
+        if hook.event == "paramsChange" {
+            let keys = params["changedKeys"].as_array().ok_or("Missing changedKeys")?;
+            if keys.is_empty() || keys.iter().any(|k| k.as_str().is_none_or(|s| !fields.contains_key(s))) ||
+                hook.param_keys.as_ref().is_some_and(|watch| !keys.iter().any(|k| watch.iter().any(|w| k.as_str() == Some(w)))) {
+                return Err("Hook does not match these parameters".into());
+            }
+            event["changedKeys"] = keys.clone().into();
+        }
+        (hook.entry.as_str(), Some(event), values(&effective, &params["values"], false)?)
+    } else {
+        (action["entry"].as_str().ok_or("Action is missing its entry")?, None, values(&effective, &params, true)?)
+    };
+    let settings = values(&m.settings, &read_json(&dir.join(".tooldeck/settings.json")), event.is_none())?;
     let runtime = if m.runtime.kind == "python" { python_venv(&dir).to_string_lossy().into_owned() } else { executable(config, &m.runtime.kind)? };
     check_version(&runtime, &m.runtime).await?;
     let temporary = RunTemp(std::env::temp_dir().join(format!("tooldeck-run-{}", uuid::Uuid::new_v4())));
     let data = Path::new(&config.data_dir).join("data").join(id);
     let temp = &temporary.0;
     for p in [&data, temp] { std::fs::create_dir_all(p).map_err(error)?; }
-    let context = json!({"locale":config.locale,"apiVersion":"1.0.0","runId":run,"toolId":id,"toolVersion":m.version,"actionId":action_id,"params":params,"settings":settings,"paths":{"tool":dir,"data":data,"temp":temp}});
-    let entry = dir.join(action["entry"].as_str().ok_or("Action is missing its entry")?);
+    let mut context = json!({"locale":config.locale,"apiVersion":"1.0.0","runId":run,"toolId":id,"toolVersion":m.version,"actionId":action_id,"params":params,"settings":settings,"paths":{"tool":dir,"data":data,"temp":temp}});
+    if let Some(event) = &event { context["hookEvent"] = event.clone(); }
+    let entry = dir.join(entry_name);
     let mut cmd = command(&runtime); cmd.current_dir(&dir);
     for (key,_) in std::env::vars_os() { if key.to_string_lossy().to_ascii_uppercase().starts_with("TOOLDECK_") { cmd.env_remove(key); } }
     if m.runtime.kind == "python" {
@@ -173,11 +194,13 @@ async fn job_inner(app: &EventSink, config: &Config, id: &str, run: &str, operat
     if matches!(m.runtime.kind.as_str(), "python"|"nodejs") {
         let listener = TcpListener::bind("127.0.0.1:0").await.map_err(error)?;
         let port = listener.local_addr().map_err(error)?.port();
-        let host_dir = Path::new(&config.data_dir).join(".host"); std::fs::create_dir_all(&host_dir).map_err(error)?;
+        let host_dir = temp;
         let (name, source) = if m.runtime.kind == "python" { ("python_host.py", include_str!("../hosts/python_host.py")) } else { ("node_host.mjs", include_str!("../hosts/node_host.mjs")) };
         let host = host_dir.join(name); std::fs::write(&host, source).map_err(error)?;
         cmd.arg(host).arg(&entry).arg(port.to_string()).env("PYTHONUTF8", "1").env("PYTHONUNBUFFERED", "1");
         let app = app.clone(); let run = run.to_owned();
+        let is_hook = event.is_some();
+        let hooks = m.hooks.clone();
         ipc = Some(tokio::spawn(async move {
             let (mut socket,_) = tokio::time::timeout(Duration::from_secs(15), listener.accept()).await.map_err(error)?.map_err(error)?;
             socket.write_all(format!("{}\n", context).as_bytes()).await.map_err(error)?;
@@ -188,6 +211,17 @@ async fn job_inner(app: &EventSink, config: &Config, id: &str, run: &str, operat
                 seq += 1;
                 if event["runId"] != run || event["seq"] != seq { return Err("Invalid ctx event sequence".into()); }
                 let kind = event["type"].as_str().ok_or("Event is missing type")?;
+                if kind == "updateParams" {
+                    let valid = crate::param_patch::validate_patch(&fields, &event["payload"]);
+                    if let Err(message) = valid {
+                        writer.write_all(format!("error: {message}\n").as_bytes()).await.map_err(error)?;
+                        return Err(message);
+                    }
+                }
+                if kind == "clearOutput" && !is_hook && !event["payload"]["hookId"].as_str().is_some_and(|id| hooks.contains_key(id)) {
+                    writer.write_all(b"error: Unknown output hook\n").await.map_err(error)?;
+                    return Err("Unknown output hook".into());
+                }
                 emit(&app, &run, kind, event["payload"].clone());
                 writer.write_all(b"ok\n").await.map_err(error)?;
             }
@@ -197,14 +231,15 @@ async fn job_inner(app: &EventSink, config: &Config, id: &str, run: &str, operat
         if m.runtime.kind == "powershell" { cmd.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-File"]); }
         else { cmd.args(["--noprofile", "--norc"]); }
         cmd.arg(entry);
+        if let Some(event) = &event { cmd.env("TOOLDECK_EVENT", event.to_string()); }
         for (prefix, values) in [("TOOLDECK_PARAM_", &params), ("TOOLDECK_SETTING_", &settings)] {
             for (key,value) in values.as_object().unwrap() { cmd.env(format!("{prefix}{}", key.to_ascii_uppercase()), value.as_str().map(str::to_owned).unwrap_or_else(|| value.to_string())); }
         }
         for (key,value) in [("LOCALE",config.locale.as_str()),("API_VERSION","1.0.0"),("RUN_ID",run),("TOOL_ID",id),("TOOL_VERSION",&m.version),("ACTION_ID",action_id)] { cmd.env(format!("TOOLDECK_{key}"), value); }
         for (key,path) in [("TOOL",&dir),("DATA",&data),("TEMP",temp)] { cmd.env(format!("TOOLDECK_{key}_DIR"), path); }
     }
-    emit(app, run, "log", json!({"message":format!("{} · {}", crate::locale::host_text(&config.locale, "Starting"), action["name"].as_str().unwrap_or(action_id)),"level":"info"}));
-    let timeout = action["execution"]["timeoutSeconds"].as_u64().unwrap_or(0);
+    if event.is_none() { emit(app, run, "log", json!({"message":format!("{} · {}", crate::locale::host_text(&config.locale, "Starting"), action["name"].as_str().unwrap_or(action_id)),"level":"info"})); }
+    let timeout = if event.is_some() { 30 } else { action["execution"]["timeoutSeconds"].as_u64().unwrap_or(0) };
     let result = process(cmd, app, run, flag, timeout).await;
     if let Some(mut ipc) = ipc {
         if result.is_err() { ipc.abort(); } else {

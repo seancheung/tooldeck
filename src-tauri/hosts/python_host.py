@@ -20,8 +20,9 @@ def run():
             sequence += 1
             event = {"version": 1, "runId": context["runId"], "seq": sequence, "type": kind, "payload": payload}
             connection.sendall((json.dumps(event, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8"))
-            if incoming.readline().strip() != "ok":
-                raise RuntimeError("Host did not acknowledge event")
+            ack = incoming.readline().strip()
+            if ack != "ok":
+                raise RuntimeError(ack or "Host did not acknowledge event")
 
         def log(message, level="info"):
             if not isinstance(message, str) or level not in ("debug", "info", "warning", "error"):
@@ -52,15 +53,29 @@ def run():
                 raise ValueError("Table rows must be objects")
             emit("table", {"columns": columns, "rows": rows})
 
+        def details(value):
+            if (not isinstance(value, dict) or not all(isinstance(value.get(k), str) for k in ("id", "title", "text"))
+                    or not value["id"].strip() or not value["title"].strip()):
+                raise TypeError("Details require an id, title and text")
+            emit("details", {k: value[k] for k in ("id", "title", "text")})
+
         context["paths"] = SimpleNamespace(**context["paths"])
-        ctx = SimpleNamespace(**context, log=log, output=lambda value: emit("output", value), progress=progress, link=link, table=table)
+        event = context.pop("hookEvent", None)
+        ctx = SimpleNamespace(**context, log=log, output=lambda value: emit("output", value), progress=progress, link=link, table=table, details=details)
         entry = Path(sys.argv[1]).resolve()
         sys.path.insert(0, str(entry.parent))
         sys.dont_write_bytecode = True
         spec = importlib.util.spec_from_file_location("tooldeck_action", entry)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        result = module.main(ctx)
+        if event is None:
+            ctx.clearOutput = lambda hook_id: emit("clearOutput", {"hookId": hook_id})
+            ctx.updateParams = lambda patch: emit("updateParams", patch)
+            result = module.main(ctx)
+        else:
+            ctx.clearOutput = lambda: emit("clearOutput", None)
+            ctx.updateParams = lambda patch: emit("updateParams", patch)
+            result = module.main(ctx, event)
         if inspect.isawaitable(result):
             asyncio.run(result)
 

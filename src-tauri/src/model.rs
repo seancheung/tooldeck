@@ -29,8 +29,12 @@ pub struct Manifest {
     pub dependencies: Option<Dependencies>,
     #[serde(default)] pub settings: Map<String, Value>,
     pub actions: Map<String, Value>,
+    #[serde(default)] pub hooks: std::collections::BTreeMap<String, Hook>,
     #[serde(default)] pub docs: Vec<Document>,
 }
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Hook { pub event: String, pub entry: String, pub param_keys: Option<Vec<String>> }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Runtime { pub kind: String, pub version: String, pub source: String }
 #[derive(Clone, Serialize, Deserialize)]
@@ -80,6 +84,19 @@ pub fn read_manifest_for(dir: &Path, locale: &str) -> Result<Manifest> {
         if !file.is_file() || !entries.insert(file) { return Err("Each action requires its own entry file".into()); }
         if let Some(fields) = action.get("params").and_then(Value::as_object) { validate_fields(fields, matches!(m.runtime.kind.as_str(), "bash"|"powershell"))?; }
     }
+    for (id, hook) in &m.hooks {
+        if !valid_key(id) || !matches!(hook.event.as_str(), "paramsChange" | "actionOpen" | "actionClose") { return Err(format!("Invalid hook: {id}")); }
+        let entry = fs::canonicalize(dir.join(&hook.entry)).map_err(error)?;
+        if Path::new(&hook.entry).is_absolute() || !entry.starts_with(fs::canonicalize(dir).map_err(error)?) || !entry.is_file() {
+            return Err(format!("Invalid hook entry: {}", hook.entry));
+        }
+        if let Some(keys) = &hook.param_keys {
+            let mut seen = HashSet::new();
+            if hook.event != "paramsChange" || keys.is_empty() || keys.iter().any(|key| !seen.insert(key) || !m.actions.values().any(|action| action["params"].get(key).is_some())) {
+                return Err(format!("Invalid paramKeys for hook {id}"));
+            }
+        }
+    }
     if let Some(d) = &m.dependencies {
         if !matches!((m.runtime.kind.as_str(), d.manager.as_str()), ("python", "pip")|("nodejs", "npm")) { return Err("Dependency manager does not match the runtime".into()); }
         if !dir.join(&d.file).is_file() { return Err(format!("Dependency file does not exist: {0}", d.file)); }
@@ -122,7 +139,7 @@ fn condition_matches(condition: &Value, fields: &Map<String, Value>, supplied: &
     }
 }
 
-fn json_equal(a: &Value, b: &Value) -> bool {
+pub(crate) fn json_equal(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Number(x), Value::Number(y)) => x.as_f64() == y.as_f64(),
         (Value::Array(x), Value::Array(y)) => x.len() == y.len() && x.iter().zip(y).all(|(i,j)| json_equal(i,j)),

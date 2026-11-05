@@ -94,4 +94,4 @@ docs:
   - id: overview
     locale: zh-CN
     title: 使用说明
-    path: README.zh.md
+    path: README.zh-CN.md

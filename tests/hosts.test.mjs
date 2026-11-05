@@ -14,6 +14,7 @@ const hasPython = !spawnSync(python, ['--version']).error;
 async function runHost(runtime, action, params, directory) {
   const events = [];
   const context = { locale: 'zh-CN', apiVersion:'1.0.0', runId:'test-run', toolId:'test.tool', toolVersion:'1.0.0', actionId:action, params, settings:{prefix:'Hello',uppercase:false},paths:{tool:root,data:directory,temp:directory} };
+  if (action === 'hook') context.hookEvent = {type: 'paramsChange', changedKeys: ['name']};
   let channelError;
   const server = net.createServer(socket=>{
     socket.write(JSON.stringify(context)+'\n');
@@ -28,6 +29,12 @@ async function runHost(runtime, action, params, directory) {
     fs.writeFileSync(actionEntry, runtime === 'node'
       ? 'export function main(ctx) { ctx.output(ctx.locale); }'
       : 'def main(ctx):\n    ctx.output(ctx.locale)\n');
+  }
+  if (action === 'hook') {
+    actionEntry = path.join(directory, runtime === 'node' ? 'observe.mjs' : 'observe.py');
+    fs.writeFileSync(actionEntry, runtime === 'node'
+      ? 'export function main(ctx, event) { ctx.clearOutput(); ctx.output(event); ctx.updateParams({name:{value:"Ada"}}); ctx.details({id:"info",title:"Info",text:" a "}); }'
+      : 'def main(ctx, event):\n    ctx.clearOutput()\n    ctx.output(event)\n    ctx.updateParams({"name":{"value":"Ada"}})\n    ctx.details({"id":"info","title":"Info","text":" a "})\n');
   }
   const env = Object.fromEntries(Object.entries(process.env).filter(([key])=>!key.toUpperCase().startsWith('TOOLDECK_')));
   const child=spawn(runtime==='node'?process.execPath:python,[host,actionEntry,String(server.address().port)],{env:{...env,PYTHONUTF8:'1'},stdio:['ignore','pipe','pipe']});
@@ -45,6 +52,12 @@ for(const runtime of ['node','python']) {
     const locale = await runHost(runtime,'locale',{},dir);
     assert.equal(locale.code,0,locale.stderr);
     assert.equal(locale.events[0].payload,'zh-CN');
+    const hook = await runHost(runtime, 'hook', {}, dir);
+    assert.equal(hook.code, 0, hook.stderr);
+    assert.deepEqual(hook.events.map(e => e.type), ['clearOutput', 'output', 'updateParams', 'details']);
+    assert.deepEqual(hook.events[3].payload, {id:"info", title:"Info", text:" a "});
+    assert.deepEqual(hook.events[2].payload, {name:{value:'Ada'}});
+    assert.deepEqual(hook.events[1].payload, {type: 'paramsChange', changedKeys: ['name']});
     const name='Montréal $(echo not-a-command)';
     const preview=await runHost(runtime,'preview',{name},dir);
     assert.equal(preview.code,0,preview.stderr);

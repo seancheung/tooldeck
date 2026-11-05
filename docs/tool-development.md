@@ -55,6 +55,7 @@ Keep the same `id` across releases and increase the SemVer `version` for each up
 | `dependencies` | No | Package manager and dependency files for the chosen runtime. |
 | `settings` | No | Field map for persistent, tool-wide settings. |
 | `actions` | Yes | Nonempty map of action IDs to declarations. |
+| `hooks` | No | Optional map of automatic event handlers. See “Respond to parameter changes”. |
 | `docs` | No | List of bundled Markdown documents; each has `id`, `title`, `path` and optional `locale`. |
 
 Each action declares a package-relative `entry`. Give it a display `name`, an optional `description`, a `params` field map and, if needed, `execution: {timeoutSeconds: 60}`. The entry must exist and resolve to a different file for every action. Document titles are strings; localize a title by declaring it in the corresponding document entry.
@@ -134,6 +135,72 @@ quality:
 - A select submits the original enum value. Option labels affect display only. An action parameter's `availableWhen` reads other parameters from the same action. Hidden parameters are optional; supplied values still undergo validation and can reach the script.
 - Compare with `eq`, `not`, `gt`, `gte`, `lt` or `lte`. Use `{op: 'null', key: x}` for missing or null, `notNull` for the inverse, and `empty` for missing, null or the empty string. Combine conditions using `{op: and, cond: [...]}` or `or`; nesting is supported.
 
+## Respond to parameter changes
+
+Declare `hooks` beside `actions` to run an entry automatically when a user commits a parameter change. The import dialog lists these automatic entries. Here is the [Node.js example](../examples/node-example/preview-name.mjs):
+
+~~~yaml
+hooks:
+  previewName:
+    event: paramsChange
+    entry: preview-name.mjs
+    paramKeys: [name]
+~~~
+
+Each hook needs a unique ID, an event and a package-relative entry file. The event for a parameter edit is `paramsChange`. Its optional `paramKeys` list filters by action parameter name before a process starts. Omit it to receive changes to all action parameters. When supplied, use distinct keys declared in at least one action and include at least one key. Tool settings do not trigger this event.
+
+- Text, password, numeric, multiline, JSON and tags inputs commit on blur. Typed file and directory paths follow the same rule. Leaving the field with its original value does not trigger a hook.
+- Selects, checkboxes, confirmed picker selections and file removals commit immediately. Cancelling a picker, loading defaults and switching actions do not trigger `paramsChange`.
+- Node.js exports `main(ctx, event)`; Python defines `main(ctx, event)`. Bash and PowerShell read the event as JSON from `TOOLDECK_EVENT` and use stdout/stderr for text output. The event contains `type: "paramsChange"` and `changedKeys`, an array. `ctx.actionId` identifies the current action. `ctx.params` contains the current form values and defaults; unrelated required fields may still be missing.
+
+~~~js
+export function main(ctx) {
+  ctx.clearOutput();
+  if (ctx.params.name) ctx.log(`Name for this greeting: ${ctx.params.name}`);
+}
+~~~
+
+Returning without output preserves the hook's previous output. Output calls append; `ctx.clearOutput()` explicitly clears only this hook's output for this tool and action. It is available in Python and Node.js hook entries. Selecting a new value supersedes the preceding invocation of the same hook; late messages and clear requests from it are ignored. Hooks require a compatible, ready environment and have a 30-second timeout. Running the action remains a separate user interaction.
+
+### Action lifecycle
+
+Declare `actionOpen` to run when an action becomes visible and `actionClose` when it is left. This includes switching the action selector, selecting another sidebar tool, or leaving and returning to the Actions tab. Editing a parameter or selecting the already visible action leaves its lifecycle unchanged. Only installed tools compatible with the current platform run hooks. If an environment becomes ready while its action is visible, that action receives an open event.
+
+~~~yaml
+hooks:
+  onOpen: { event: actionOpen, entry: lifecycle.mjs }
+  onClose: { event: actionClose, entry: lifecycle.mjs }
+~~~
+
+Read the action ID from `ctx.actionId` and the event name from `event.type`. Lifecycle events have no `changedKeys` and cannot declare `paramKeys`. Close receives the outgoing action’s last form snapshot; open receives the incoming action’s snapshot. Leaving schedules close before opening the next action, but navigation does not wait for the script to finish. Close output belongs to the outgoing action; its form patches are ignored. These events describe in-app navigation and are not a shutdown callback. See the [Node.js lifecycle example](../examples/node-example/lifecycle.mjs).
+
+### Update the current form from a hook
+
+An action can also call `ctx.updateParams(patch)` to reset a one-shot input after the requested operation succeeds. To remove the displayed history of a named hook for this action, call `ctx.clearOutput(hookId)` from the action. Inside a hook, `ctx.clearOutput()` still clears its own output.
+
+Python and Node.js hooks can call `ctx.updateParams(patch)`. Each key names an existing parameter of the current action. One call applies all its changes together; an invalid field or value rejects the whole patch. `ctx.params` remains the snapshot the hook received. Updates refresh the form and its conditions without triggering another `paramsChange`. A superseded hook cannot write back. Switching actions resets dynamic changes.
+
+| Property | Effect |
+| --- | --- |
+| `value` | Sets a JSON value that satisfies the field schema. An explicit `null` is valid only if the schema allows it. |
+| `unset: true` | Removes the value, including a prefilled default. Use instead of `value` to clear a selection. |
+| `options` | Replaces a select's choices with an array of `{value, label?}` objects. Use unique schema-valid values and optional nonempty string labels. An empty array provides no choices. |
+| `visible` | Boolean. A field is shown only when both this flag and any `availableWhen` condition permit it. Hiding waives presence; a supplied value is still validated. |
+
+For a list discovered at runtime, declare `ui.component: select` and a base schema such as `{type: string}`. If you also declare `schema.enum`, the runtime options must be a subset. When the current selection is outside the replacement list, supply a new value or `unset: true` in the same patch. The host checks the selected value against the active choices again before running. For visibility driven entirely by other parameter values, prefer declarative `availableWhen`.
+
+~~~js
+ctx.updateParams({
+  sourceFile: {
+    options: names.map(value => ({value, label: value})),
+    visible: names.length > 0,
+    ...(names.length ? {value: names[0]} : {unset: true}),
+  },
+});
+~~~
+
+Try **Inspect a folder** in the [Node.js manifest](../examples/node-example/manifest.yaml). Its [directory hook](../examples/node-example/list-files.mjs) keeps a matching filename when switching directories, selects the first file otherwise, and hides the dropdown for an empty directory.
+
 ## Run an action and report results
 
 Each action starts a separate process in the tool directory. Use `execution.timeoutSeconds` on the action for a time limit (zero or omitted means no tool-defined limit). Scripts should take inputs from the host and finish after completing the action. An uncaught exception or nonzero exit fails a run.
@@ -148,6 +215,15 @@ ctx.link({"kind": "directory", "target": ctx.paths.data})
 ~~~
 
 Use `ctx.output(value)` for JSON results. `ctx.log(message, level)` defaults to info and also accepts debug, warning or error. Progress accepts a message alone or a finite value and positive total with the value between zero and total. Tables take unique column keys, optional labels and row objects. Links accept a file or directory with an absolute path, or a URL with an HTTP(S) target and an optional label. File links reveal the file in its directory. Ordinary stdout/stderr becomes text logs. ToolDeck records run logs, so keep secrets out of any output.
+
+### Collapsible output
+
+Use `ctx.details({id, title, text})` in Python or Node.js to append plain text to an initially collapsed section. Within one invocation, repeated calls with the same ID append fragments verbatim, without timestamps or separators. Include line breaks in `text` when needed. Use a different ID for another section.
+
+~~~python
+ctx.details({"id": "diagnostics", "title": "Diagnostics", "text": "Checking "})
+ctx.details({"id": "diagnostics", "title": "Diagnostics", "text": "files…\n"})
+~~~
 
 ### Reporting a table with `ctx.table`
 

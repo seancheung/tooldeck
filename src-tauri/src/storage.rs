@@ -1,5 +1,6 @@
 use crate::model::*;
 use serde::Serialize;
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{fs, io, path::{Path, PathBuf}};
 
@@ -69,6 +70,8 @@ fn unchanged_dependencies(old_dir: &Path, new_dir: &Path, old: &Manifest, new: &
                 }
             }
             if old_package != new_package { return Ok(false); }
+        } else if a.manager == "npm" && matches!(file.as_str(), "package-lock.json" | "npm-shrinkwrap.json") {
+            if npm_lock_dependencies(&old_bytes)? != npm_lock_dependencies(&new_bytes)? { return Ok(false); }
         } else if old_bytes != new_bytes { return Ok(false); }
     }
     Ok(old_dir.join(".tooldeck/installed.json").is_file() && match a.manager.as_str() {
@@ -76,6 +79,40 @@ fn unchanged_dependencies(old_dir: &Path, new_dir: &Path, old: &Manifest, new: &
         "npm" => old_dir.join("node_modules").is_dir(),
         _ => false,
     })
+}
+
+fn npm_lock_dependencies(bytes: &[u8]) -> Result<Value> {
+    let mut lock: Value = serde_json::from_slice(bytes).map_err(error)?;
+    // npm version writes release metadata at both the top level and packages[""].
+    // Nested package versions, integrity hashes and resolution data still matter.
+    if let Some(top) = lock.as_object_mut() {
+        top.remove("name");
+        top.remove("version");
+    }
+    if let Some(root) = lock.pointer_mut("/packages/").and_then(Value::as_object_mut) {
+        root.remove("name");
+        root.remove("version");
+    }
+    Ok(lock)
+}
+
+#[cfg(test)]
+mod dependency_tests {
+    use super::*;
+    #[test]
+    fn npm_lock_ignores_only_root_release_metadata() {
+        let lock = serde_json::json!({"version":"1.0.0","lockfileVersion":3,"packages":{
+            "":{"version":"1.0.0","dependencies":{"yaml":"^2"}},
+            "node_modules/yaml":{"version":"2.9.0","integrity":"original"}
+        }});
+        let compare = |v: &Value| npm_lock_dependencies(&serde_json::to_vec(v).unwrap()).unwrap();
+        let mut newer = lock.clone();
+        newer["version"] = "1.1.0".into();
+        newer["packages"][""]["version"] = "1.1.0".into();
+        assert_eq!(compare(&lock), compare(&newer));
+        newer["packages"]["node_modules/yaml"]["version"] = "2.9.1".into();
+        assert_ne!(compare(&lock), compare(&newer));
+    }
 }
 #[derive(Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -33,17 +33,26 @@ try {
       if (channelError) throw channelError;
       socket.write(message + '\n');
       const ack = await lines.next();
-      if (ack.done || ack.value !== 'ok') throw new Error('Host did not acknowledge event');
+      if (ack.done || ack.value !== 'ok') throw new Error(ack.value || 'Host did not acknowledge event');
     });
     queue.catch(() => {});
   };
+  const { hookEvent, ...metadata } = context;
   const ctx = {
-    ...context,
+    ...metadata,
+    clearOutput: hookEvent ? () => emit('clearOutput', null) : hookId => emit('clearOutput', {hookId}),
+    updateParams: patch => emit('updateParams', patch),
     log(message, level = 'info') {
       if (typeof message !== 'string' || !['debug', 'info', 'warning', 'error'].includes(level)) throw new TypeError('Invalid log');
       emit('log', { message, level });
     },
     output(value) { emit('output', value); },
+    details({id, title, text}) {
+      if (typeof id !== 'string' || !id.trim() || typeof title !== 'string' || !title.trim() || typeof text !== 'string') {
+        throw new TypeError('Details require an id, title and text');
+      }
+      emit('details', {id, title, text});
+    },
     table(value) {
       const { columns, rows } = value ?? {};
       if (!Array.isArray(columns) || !columns.length || columns.some(c => !c || typeof c.key !== 'string' || !c.key || (c.label !== undefined && typeof c.label !== 'string')) || new Set(columns.map(c => c.key)).size !== columns.length) throw new TypeError('Table needs unique column keys');
@@ -64,7 +73,8 @@ try {
   };
   const module = await import(pathToFileURL(process.argv[2]).href);
   if (typeof module.main !== 'function') throw new Error('Entry must export main(ctx)');
-  await module.main(ctx);
+  if (hookEvent) await module.main(ctx, hookEvent);
+  else await module.main(ctx);
   await queue;
   await new Promise(resolve => socket.end(resolve));
 } catch (error) {
