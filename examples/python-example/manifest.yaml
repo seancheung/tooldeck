@@ -1,0 +1,103 @@
+manifestVersion: 1
+id: org.tooldeck.python-example
+name: { en: Python Example, zh-CN: Python 示例 }
+version: "1.0.0"
+description: { en: Preview a greeting or save it to a file., zh-CN: 预览问候语，或保存到指定文件。 }
+hostApi: "^1.0.0"
+
+# platforms 省略：不限制平台或架构。
+runtime:
+  kind: python
+  version: ">=3.10.0 <4.0.0"
+  source: system
+
+dependencies:
+  manager: pip
+  file: requirements.txt
+
+settings:
+  prefix:
+    schema:
+      type: string
+      default: ""
+    ui:
+      label: { en: Greeting prefix, zh-CN: 问候语前缀 }
+      placeholder: {"en":"Leave blank for a greeting in the current language","zh-CN":"留空使用当前显示语言的问候语"}
+      component: text
+  uppercase:
+    schema:
+      type: boolean
+      default: false
+    ui:
+      label: { en: Uppercase (ASCII), zh-CN: 转为大写（示例以 ASCII 为准） }
+      component: checkbox
+
+actions:
+  table:
+    name: { en: Show table, zh-CN: 输出表格 }
+    entry: table.py
+    execution:
+      timeoutSeconds: 30
+
+  preview:
+    name: { en: Preview greeting, zh-CN: 预览问候语 }
+    entry: preview.py
+    execution:
+      timeoutSeconds: 30
+    params:
+      name:
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 120
+          default: ToolDeck
+        ui:
+          label: { en: Name, zh-CN: 称呼 }
+          placeholder: {"en":"Enter a name","zh-CN":"输入称呼"}
+          component: text
+
+  write:
+    name: { en: Save greeting, zh-CN: 保存问候语 }
+    description: { en: Choose a new file in an existing directory., zh-CN: 拒绝覆盖已有文件，目标父目录必须存在。 }
+    entry: write.py
+    execution:
+      timeoutSeconds: 30
+    params:
+      name:
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 120
+          default: ToolDeck
+        ui:
+          label: { en: Name, zh-CN: 称呼 }
+          placeholder: {"en":"Enter a name","zh-CN":"输入称呼"}
+          component: text
+      destination:
+        required: true
+        schema:
+          type: string
+          minLength: 1
+        ui:
+          label: { en: Save to, zh-CN: 保存到 }
+          placeholder: {"en":"Choose a new text file","zh-CN":"选择新的文本文件"}
+          component: file
+          mode: save
+          filters:
+            - name: TXT (*.txt)
+              extensions: [txt]
+        path:
+          kind: file
+          mustExist: false
+
+docs:
+  - id: overview
+    locale: en
+    title: User guide
+    path: README.md
+  - id: overview
+    locale: zh-CN
+    title: 使用说明
+    path: README.zh.md

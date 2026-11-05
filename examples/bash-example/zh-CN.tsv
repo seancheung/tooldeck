@@ -1,0 +1,7 @@
+Hello	你好
+Missing name	缺少称呼
+Invalid uppercase setting	大写设置必须为 true 或 false
+Missing destination	缺少保存路径
+Choose an absolute destination path.	请选择绝对保存路径。
+Could not create the file. Choose a new path in an existing directory.	无法创建文件，请选择已有目录下的新文件名。
+Saved	已保存

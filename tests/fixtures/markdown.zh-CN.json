@@ -1,0 +1,5 @@
+{
+  "paragraph": "例如 http://127.0.0.1:7890。这些设置仅用于下载。 www.example.com user@example.com",
+  "markdown": "[官网](https://example.com) [文档][doc] <https://example.org>\n\n[doc]: ./README.md\n\n| 列 |\n| --- |\n| ~~内容~~ |",
+  "cell": "内容"
+}

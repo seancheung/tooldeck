@@ -1,0 +1,13 @@
+{
+  "Preparing to write": "准备写入",
+  "Open greeting file": "打开问候语文件",
+  "Open containing directory": "打开所在目录",
+  "Done": "完成",
+  "File": "文件",
+  "Size (bytes)": "大小（字节）",
+  "User guide": "使用说明",
+  "Tool directory": "工具目录",
+  "Hello": "你好",
+  "Choose an absolute destination path.": "请选择绝对保存路径。",
+  "The destination file already exists.": "目标文件已存在。"
+}

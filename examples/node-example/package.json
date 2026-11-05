@@ -1,0 +1,11 @@
+{
+  "name": "@tooldeck/node-example",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "ToolDeck execution protocol example",
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "dependencies": {}
+}

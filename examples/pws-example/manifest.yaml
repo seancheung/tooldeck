@@ -1,0 +1,83 @@
+manifestVersion: 1
+id: org.tooldeck.pws-example
+name: PowerShell Example
+version: "1.0.0"
+description: Preview a greeting or save it to a file.
+hostApi: "^1.0.0"
+
+# Omitting platforms allows all platforms and architectures.
+runtime:
+  kind: powershell
+  version: ">=7.0.0 <8.0.0"
+  source: system
+
+
+settings:
+  prefix:
+    schema:
+      type: string
+      minLength: 1
+      default: Hello
+    ui:
+      label: Greeting prefix
+      component: text
+  uppercase:
+    schema:
+      type: boolean
+      default: false
+    ui:
+      label: Uppercase greeting
+      component: checkbox
+
+actions:
+  preview:
+    name: Preview greeting
+    entry: preview.ps1
+    execution:
+      timeoutSeconds: 30
+    params:
+      name:
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 120
+          default: ToolDeck
+        ui:
+          label: Name
+          component: text
+
+  write:
+    name: Save greeting
+    description: Choose a new file in an existing directory.
+    entry: write.ps1
+    execution:
+      timeoutSeconds: 30
+    params:
+      name:
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 120
+          default: ToolDeck
+        ui:
+          label: Name
+          component: text
+      destination:
+        required: true
+        schema:
+          type: string
+          minLength: 1
+        ui:
+          label: Destination
+          component: file
+          mode: save
+        path:
+          kind: file
+          mustExist: false
+
+docs:
+  - id: overview
+    title: User guide
+    path: README.md
