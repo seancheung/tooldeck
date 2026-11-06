@@ -26,6 +26,14 @@ impl RunLog {
 }
 
 pub fn clear(config: &Config) -> Result<usize> {
+    clear_matching(config, None)
+}
+
+pub fn clear_tool(config: &Config, id: &str) -> Result<usize> {
+    clear_matching(config, Some(id))
+}
+
+fn clear_matching(config: &Config, tool: Option<&str>) -> Result<usize> {
     let dir = Path::new(&config.data_dir).join("logs");
     if !dir.exists() { return Ok(0); }
     let base = Path::new(&config.data_dir).canonicalize().map_err(error)?;
@@ -36,6 +44,13 @@ pub fn clear(config: &Config) -> Result<usize> {
         let path = entry.path();
         if entry.file_type().map_err(error)?.is_file() && path.extension().is_some_and(|e| e == "jsonl")
             && path.file_stem().and_then(|s| s.to_str()).is_some_and(|s| uuid::Uuid::parse_str(s).is_ok()) {
+            if let Some(id) = tool {
+                use std::io::{BufRead, BufReader, Read};
+                let mut first = String::new();
+                BufReader::new(File::open(&path).map_err(error)?).take(65536).read_line(&mut first).map_err(error)?;
+                let Ok(event) = serde_json::from_str::<Value>(&first) else { continue; };
+                if event["type"] != "started" || event["payload"]["toolId"].as_str() != Some(id) { continue; }
+            }
             fs::remove_file(path).map_err(error)?;
             count += 1;
         }

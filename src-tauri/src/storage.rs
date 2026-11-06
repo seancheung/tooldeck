@@ -183,8 +183,9 @@ pub fn import_zip_confirmed(config: &Config, file: &str, confirmation: Option<&I
         }
         let marker = prepared.join(".tooldeck/installed.json");
         if marker.exists() { fs::remove_file(marker).map_err(error)?; }
-        if previous_version.is_some() {
-            let settings = dest.join(".tooldeck/settings.json");
+        {
+            let settings = if previous_version.is_some() { dest.join(".tooldeck/settings.json") }
+                else { retained_settings(config, &manifest.id)? };
             if settings.is_file() {
                 fs::create_dir_all(prepared.join(".tooldeck")).map_err(error)?;
                 fs::copy(settings, prepared.join(".tooldeck/settings.json")).map_err(error)?;
@@ -242,9 +243,39 @@ pub fn uninstall(config: &Config, id: &str) -> Result<()> {
     let marker = dir.join(".tooldeck/installed.json"); if marker.exists() { fs::remove_file(marker).map_err(error)?; }
     Ok(())
 }
-pub fn delete(config: &Config, id: &str) -> Result<()> {
+fn retained_settings(config: &Config, id: &str) -> Result<PathBuf> {
+    tool_dir(config, id)?;
+    let base = Path::new(&config.data_dir).canonicalize().map_err(error)?;
+    let dir = base.join("retained-settings");
+    if dir.exists() && dir.canonicalize().map_err(error)? != dir { return Err("Retained settings directory cannot be an external link".into()); }
+    Ok(dir.join(format!("{id}.json")))
+}
+
+#[derive(serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DeleteOptions { pub settings: bool, pub data: bool, pub logs: bool }
+impl Default for DeleteOptions {
+    fn default() -> Self { Self { settings: true, data: false, logs: false } }
+}
+
+pub fn delete(config: &Config, id: &str, options: DeleteOptions) -> Result<()> {
     let dir = tool_dir(config, id)?;
     if !dir.join("manifest.yaml").is_file() { return Err("Tool not found".into()); }
+    let base = Path::new(&config.data_dir).canonicalize().map_err(error)?;
+    if dir.canonicalize().map_err(error)? != base.join("tools").join(id) { return Err("Tool directory cannot be an external link".into()); }
+    let data = Path::new(&config.data_dir).join("data").join(id);
+    if options.data && data.exists() && data.canonicalize().map_err(error)? != base.join("data").join(id) {
+        return Err("Tool data directory cannot be an external link".into());
+    }
+    let retained = retained_settings(config, id)?;
+    let settings = dir.join(".tooldeck/settings.json");
+    if !options.settings && settings.is_file() {
+        fs::create_dir_all(retained.parent().unwrap()).map_err(error)?;
+        if retained.exists() { fs::remove_file(&retained).map_err(error)?; }
+        fs::copy(settings, &retained).map_err(error)?;
+    } else if retained.exists() { fs::remove_file(&retained).map_err(error)?; }
+    if options.logs { crate::run_logs::clear_tool(config, id)?; }
+    if options.data && data.exists() { fs::remove_dir_all(data).map_err(error)?; }
     fs::remove_dir_all(dir).map_err(error)
 }
 #[derive(Serialize)]

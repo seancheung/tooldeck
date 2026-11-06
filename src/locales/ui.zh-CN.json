@@ -1,4 +1,6 @@
 {
+  "Reset": "重置",
+  "Reset form and clear output": "重置表单并清空输出",
   "Automatic hooks": "自动执行的钩子",
   "All parameters": "所有参数",
   "Choose a ZIP tool package.": "请选择 ZIP 工具包。",
@@ -112,5 +114,14 @@
   "Simplified Chinese": "简体中文",
   ", ": "、",
   "{platform} ({arch})": "{platform}（{arch}）",
-  "Open ToolDeck in its desktop window.": "请在桌面窗口中打开 ToolDeck。"
+  "Open ToolDeck in its desktop window.": "请在桌面窗口中打开 ToolDeck。",
+  "Deleting…": "正在删除…",
+  "Also delete the selected data. Unchecked items will be kept.": "同时删除以下勾选的数据，未勾选的内容将保留。",
+  "Run data (sessions, history and caches)": "运行数据（会话、历史记录和缓存）",
+  "Run logs for this tool": "此工具的运行日志",
+  "Files saved to locations you selected are not deleted.": "保存在你指定位置的文件不会被删除。",
+  "Tool files and installed dependencies will be deleted.": "工具文件和已安装的依赖将被删除。",
+  "Kept settings are restored when you import this tool again.": "保留的设置会在重新导入此工具时恢复。",
+  "Includes persistent data saved by this tool.": "包括工具保存的持久数据。",
+  "Restore defaults; save to apply": "恢复默认值，保存后生效"
 }

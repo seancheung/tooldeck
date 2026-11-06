@@ -85,7 +85,7 @@ pub fn read_manifest_for(dir: &Path, locale: &str) -> Result<Manifest> {
         if let Some(fields) = action.get("params").and_then(Value::as_object) { validate_fields(fields, matches!(m.runtime.kind.as_str(), "bash"|"powershell"))?; }
     }
     for (id, hook) in &m.hooks {
-        if !valid_key(id) || !matches!(hook.event.as_str(), "paramsChange" | "actionOpen" | "actionClose") { return Err(format!("Invalid hook: {id}")); }
+        if !valid_key(id) || !matches!(hook.event.as_str(), "paramsChange" | "actionOpen" | "actionClose" | "actionReset") { return Err(format!("Invalid hook: {id}")); }
         let entry = fs::canonicalize(dir.join(&hook.entry)).map_err(error)?;
         if Path::new(&hook.entry).is_absolute() || !entry.starts_with(fs::canonicalize(dir).map_err(error)?) || !entry.is_file() {
             return Err(format!("Invalid hook entry: {}", hook.entry));

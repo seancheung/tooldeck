@@ -21,7 +21,8 @@ input,select,textarea{padding:7px 10px;border-radius:5px;font-size:13px}
 .library-groups{margin:0 -6px;padding-bottom:10px}.library-group{margin-bottom:12px}
 .group-heading{padding:7px 10px 9px;font-size:13px}.group-heading>svg{width:14px;height:14px}
 .tool-row{min-height:42px;padding:8px 10px;gap:8px;margin-bottom:3px;border-radius:5px}
-.tool-row>svg{width:20px;height:20px}.tool-name{font-size:13px;font-weight:400}.tool-name small{font-size:10px;margin-top:1px}
+.tool-row>svg{width:20px;height:20px}.tool-name{font-size:13px;font-weight:400;line-height:20px}
+.tool-status{display:inline-flex;align-items:center;justify-content:center;flex:0 0 18px;width:18px;height:18px;color:#c4a975}.tool-status:empty{display:none}.tool-status.running{color:#a3c9ee}.tool-status.success{color:var(--accent)}.tool-status.error{color:var(--danger)}.tool-status.cancelled{color:var(--muted)}
 .runtime-icon{width:20px;height:20px;margin-left:2px}.runtime-icon img{width:17px;height:17px}
 .sidebar-footer{padding-top:9px;gap:3px}.sidebar-footer button{padding:8px;font-size:13px}.sidebar-footer svg{width:18px;height:18px}
 .main{padding:19px 22px 20px}.tool-header{min-height:36px;margin-bottom:13px;gap:12px}.tool-heading{gap:10px}.tool-heading h1{font-size:22px}.tool-heading>svg{width:30px;height:30px}
@@ -169,3 +170,12 @@ select {
 .output-details { min-width: 0; padding: 6px 0; }
 .output-details summary { cursor: pointer; color: var(--muted); }
 .output-details pre { margin: 8px 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+
+.output-action{font-size:12px;color:var(--muted);margin:5px 0 0}.output-header h2{margin-bottom:0}
+
+.run-footer{display:flex;gap:10px;justify-content:center}.run-footer>button{flex:1;min-width:0;margin-inline:0}.run-footer>.reset-action{flex:0 0 auto;width:auto;min-height:36px;padding-inline:14px}
+
+.delete-log-option{margin-top:20px}
+
+.settings-actions{display:flex;align-items:center;gap:10px}
+.settings-actions>button{height:34px;min-height:34px;padding:0 14px;line-height:18px;font-size:12px}

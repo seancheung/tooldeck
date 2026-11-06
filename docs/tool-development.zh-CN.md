@@ -2,7 +2,29 @@
 
 [English](tool-development.md) | 简体中文 · [项目介绍](../README.zh-CN.md)
 
-## 制作第一个工具包
+<a id="overview"></a>
+
+## 1. 分类清单与阅读顺序
+
+先通过分类清单定位需要的能力，再阅读对应章节的字段说明、调用规则和示例。`ctx` 的清单、属性和函数集中在第 6–9 节；hook 的触发时机单独在第 10 节说明。
+
+| 章节 | 内容 |
+| --- | --- |
+| [2. 最小工具包](#quick-start) | 可导入的 manifest 与入口示例 |
+| [3. 清单与运行环境](#manifest) | 工具身份、兼容性、运行时、依赖、操作与文档 |
+| [4. 表单声明](#forms) | 字段清单、控件清单、路径与条件 |
+| [5. 操作执行与入口](#execution) | 进程、超时、Python/Node.js 入口及 Shell 环境变量 |
+| [6. ctx 分类清单](#ctx-reference) | 按输入、身份、路径、输出、控制分类的完整清单 |
+| [7. ctx 属性逐项说明](#ctx-properties) | 逐个解释输入、元数据和路径 |
+| [8. ctx 输出函数逐项说明](#ctx-output-functions) | log、json、progress、link、details、table |
+| [9. ctx 表单与输出控制](#ctx-controls) | updateParams 与 clearOutput |
+| [10. hook 分类与事件说明](#hooks) | paramsChange、actionOpen、actionClose、actionReset |
+| [11. 切换、重置与输出顺序](#session-state) | 状态保留、重置范围、消息排序 |
+| [12. 本地化与发布验证](#localization) | 语言回退、文档声明、发布检查 |
+
+<a id="quick-start"></a>
+
+## 2. 最小工具包
 
 创建一个目录，在其中放入两个 UTF-8 文件。先将以下内容保存为 `manifest.yaml`。这个工具只有一个操作，要求用户填写姓名。
 
@@ -32,14 +54,14 @@ actions:
 def main(ctx):
     name = ctx.params["name"]
     message = {"en": "Hello", "zh-CN": "你好"}.get(ctx.locale, "Hello")
-    ctx.output({"message": f"{message}, {name}!"})
+    ctx.json({"message": f"{message}, {name}!"})
 ~~~
 
 将两个文件压缩成 ZIP，使 `manifest.yaml` 位于压缩包根目录。导入 ZIP，安装 Python 环境，选择**打招呼**，输入姓名并运行。结果区会按应用显示语言展示问候语。需要实现多个操作时，可以参考完整的 [Python](../examples/python-example/)、[Node.js](../examples/node-example/)、[Bash](../examples/bash-example/) 和 [PowerShell](../examples/pws-example/) 工具包。
 
-## 声明工具身份和环境
+<a id="manifest"></a>
 
-每次发布沿用相同的 `id`，并递增符合 SemVer 的 `version`。工具 ID 使用小写反向域名，例如 `org.example.greeting`。操作、字段和文档的标识符以英文字母开头，可包含字母、数字和下划线。每个操作声明自己的 `name` 和独立的 `entry` 文件，多个入口可以导入共用模块。包内路径相对于工具根目录，使用 `/`；绝对路径和向上跳转的路径会被拒绝。
+## 3. 清单与运行环境
 
 | 顶层字段 | 是否必填 | 类型与用途 |
 | --- | --- | --- |
@@ -58,7 +80,21 @@ def main(ctx):
 | `hooks` | 否 | 自动事件入口映射，详见“响应参数变化”。 |
 | `docs` | 否 | 包内 Markdown 文档列表，每项包含 `id`、`title`、`path`，可选填 `locale`。 |
 
+### 身份、版本与包路径
+
+每次发布沿用相同的 `id`，并递增符合 SemVer 的 `version`。工具 ID 使用小写反向域名，例如 `org.example.greeting`。操作、字段和文档的标识符以英文字母开头，可包含字母、数字和下划线。每个操作声明自己的 `name` 和独立的 `entry` 文件，多个入口可以导入共用模块。包内路径相对于工具根目录，使用 `/`；绝对路径和向上跳转的路径会被拒绝。
+
 每个操作声明相对于工具目录的 `entry`。填写显示名称 `name`，按需提供 `description`、字段映射 `params`，以及 `execution: {timeoutSeconds: 60}` 等超时配置。每个入口都必须存在，且不同操作应指向不同文件。文档标题是字符串，翻译标题时在各语言的文档条目中分别填写。
+
+### 操作声明清单
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `name` | 是 | 操作显示名称，支持语言映射。 |
+| `entry` | 是 | 包内入口文件；不同操作使用不同入口文件，可导入共享代码。 |
+| `description` | 否 | 操作说明，支持语言映射。 |
+| `params` | 否 | 该操作的参数字段映射，见表单声明。 |
+| `execution.timeoutSeconds` | 否 | 超时秒数；零或省略表示不设置工具定义的超时。 |
 
 ### 运行时和安装配置
 
@@ -69,7 +105,9 @@ def main(ctx):
 | `runtime` | 选择 `python`、`nodejs`、`bash` 或 `powershell`，声明 SemVer 版本范围和 `source: system`。PowerShell 使用 `pwsh`。 |
 | `dependencies` | Python 使用 `{manager: pip, file: requirements.txt}`。即使省略依赖声明，uv 也会创建独立的 `.venv`。Node.js 使用 `{manager: npm, file: package.json}`，可选填 `lockfile: package-lock.json`。将声明的文件放在工具包根目录。 |
 
-## 设计参数表单
+<a id="forms"></a>
+
+## 4. 表单声明
 
 将跨次运行共用的配置放在顶层 `settings` 中，将本次操作的输入放在对应操作的 `params` 中。两者都以字段名为键，每个字段都需要 `schema`。使用 `required: true` 要求字段必须提供。字段缺失时使用该字段的 `schema.default`；`ui.placeholder` 仅供输入提示。在设置字段上使用 `secret: true` 可以遮蔽界面上的值；保存的设置位于 `.tooldeck/settings.json`。
 
@@ -135,88 +173,175 @@ quality:
 - select 提交原始枚举值，选项标签仅控制显示。操作参数的 `availableWhen` 可读取同一操作的其他参数。隐藏字段按非必填处理；已提供的值仍会经过校验，也可能传入脚本。
 - 比较运算支持 `eq`、`not`、`gt`、`gte`、`lt`、`lte`。`{op: 'null', key: x}` 判断字段缺失或为 null，`notNull` 与其相反，`empty` 同时匹配缺失、null 和空字符串。复合条件使用 `{op: and, cond: [...]}` 或 `or`，支持嵌套。
 
-## 响应参数变化
+<a id="execution"></a>
 
-在与 `actions` 同级的 `hooks` 中声明自动执行的入口。用户提交参数变化时，宿主调用匹配的入口；导入确认弹窗会列出这些自动执行项。以下配置来自 [Node.js 示例](../examples/node-example/preview-name.mjs)：
-
-~~~yaml
-hooks:
-  previewName:
-    event: paramsChange
-    entry: preview-name.mjs
-    paramKeys: [name]
-~~~
-
-每个 hook 需要唯一 ID、事件名和相对于包根目录的入口文件。监听参数编辑使用 `paramsChange`。可选的 `paramKeys` 仅用于此事件，宿主在启动进程前按操作参数名过滤。省略时监听所有操作参数；填写时至少指定一个键，各键不能重复，且必须在至少一个操作中声明。修改工具设置不会触发此事件。
-
-- 单行、多行、密码、数字、JSON 和 tags 输入框在离焦时提交。手动输入文件或目录路径也遵循此规则。改完又改回原值，离焦时不会触发。
-- 下拉框、复选框、对话框确认选择及多选文件移除会立即提交。取消选择、填充默认值和切换操作不会触发 `paramsChange`。
-- Node.js 导出 `main(ctx, event)`，Python 定义 `main(ctx, event)`。Bash 和 PowerShell 从 `TOOLDECK_EVENT` 环境变量读取 JSON 事件，用标准输出和标准错误输出文本。事件包含 `type: "paramsChange"` 和实际变化的参数名数组 `changedKeys`。`ctx.actionId` 标识当前操作，`ctx.params` 包含当前表单值及默认值，其他必填字段此时可能尚未填写。
-
-~~~js
-export function main(ctx) {
-  ctx.clearOutput();
-  if (ctx.params.name) ctx.log(`Name for this greeting: ${ctx.params.name}`);
-}
-~~~
-
-直接返回时，历史输出保留；再次输出时，内容追加。Python 和 Node.js 的 hook 可调用 `ctx.clearOutput()`，仅清除当前工具、当前操作下该 hook 的输出。再次触发同一个 hook 后，宿主忽略上一次调用迟到的输出和清空请求。hook 需要兼容且已就绪的运行环境，超时为 30 秒。正式操作仍由用户点击运行来启动。
-
-### 操作页生命周期
-
-操作显示时触发 `actionOpen`，离开时触发 `actionClose`。切换操作下拉框、从左侧选择另一个工具，以及离开或返回“操作”标签页，都遵循这条规则。编辑参数或重复选择当前操作不会重复触发生命周期事件。只有已安装且兼容当前平台的工具才执行 hook。如果当前操作仍然可见，安装成功后会触发一次打开事件。
-
-~~~yaml
-hooks:
-  onOpen: { event: actionOpen, entry: lifecycle.mjs }
-  onClose: { event: actionClose, entry: lifecycle.mjs }
-~~~
-
-通过 `ctx.actionId` 读取操作 ID，通过 `event.type` 区分事件。这两个事件没有 `changedKeys`，也不能配置 `paramKeys`。关闭事件收到离开前的表单快照，打开事件收到进入时的快照。切换时先调度旧操作的关闭，再调度新操作的打开；页面切换不等待脚本执行完毕。关闭事件的输出归属旧操作，对表单的写回会被忽略。这两个事件用于应用内导航，不保证在退出应用时执行。可参考 [Node.js 生命周期示例](../examples/node-example/lifecycle.mjs)。
-
-### 从 hook 更新当前表单
-
-正式操作也可以调用 `ctx.updateParams(patch)`，例如在操作成功后复位一次性勾选框。操作中可用 `ctx.clearOutput(hookId)` 清除当前操作下指定 hook 的输出。hook 内的 `ctx.clearOutput()` 仍只清除自身的输出。
-
-Python 和 Node.js 的 hook 可以调用 `ctx.updateParams(patch)`。补丁的键必须是当前操作已声明的参数名。一次调用中的修改一起生效，任一字段或值无效时整批拒绝。`ctx.params` 始终是本轮调用开始时的快照。写回会刷新表单并重新计算显隐条件，不会再次触发 `paramsChange`。过期调用不能写回；切换操作时动态修改会重置。
-
-| 属性 | 行为 |
-| --- | --- |
-| `value` | 设置符合字段 schema 的 JSON 值。只有 schema 允许时才能显式设置 `null`。 |
-| `unset: true` | 移除字段值，包括预填的默认值。要清空选择时使用它，不与 `value` 同时提供。 |
-| `options` | 用 `{value, label?}` 对象数组替换下拉选项。值必须唯一且满足字段 schema；标签可省略，指定时须为非空字符串。空数组表示没有候选项。 |
-| `visible` | 布尔值。只有该标志与 `availableWhen` 都允许时才显示。隐藏字段免于必填检查，已提供的值仍需校验。 |
-
-若选项在运行时才能确定，声明 `ui.component: select` 和基础 schema，例如 `{type: string}`。若同时声明了 `schema.enum`，动态选项只能是它的子集。旧选中值不在新列表中时，须在同一个补丁里选定新值或提供 `unset: true`。正式运行前，宿主会再次按当前选项校验提交值。若显隐完全取决于其他参数的值，优先使用 `availableWhen`。
-
-~~~js
-ctx.updateParams({
-  sourceFile: {
-    options: names.map(value => ({value, label: value})),
-    visible: names.length > 0,
-    ...(names.length ? {value: names[0]} : {unset: true}),
-  },
-});
-~~~
-
-可在 [Node.js 示例 manifest](../examples/node-example/manifest.yaml) 中选择 **Inspect a folder**。[目录 hook](../examples/node-example/list-files.mjs) 会在切换目录时尽量保留同名文件，否则选中第一个文件；目录为空时清空选中值并隐藏下拉框。
-
-## 执行操作并返回结果
+## 5. 操作执行与入口
 
 每个操作都会在工具目录中启动独立进程。可通过操作的 `execution.timeoutSeconds` 设置超时秒数，零或省略表示工具未指定超时。脚本从宿主接收输入，完成后退出。未捕获的异常或非零退出码会使运行失败。
 
 **Python 与 Node.js。** Python 定义 `main(ctx)`，Node.js 导出 `main(ctx)`，两者均支持异步函数。读取 `ctx.params`、`ctx.settings` 和 `ctx.locale` 获取参数、设置和显示语言。运行信息包括 `apiVersion`、`runId`、`actionId`、`toolId`、`toolVersion`。用 `ctx.paths.tool` 查找包内文件，`ctx.paths.data` 保存持久状态，`ctx.paths.temp` 存放本次运行的临时文件。用户产物的保存位置应从操作参数获取。
 
-~~~python
-ctx.log("Processing")
-ctx.progress({"value": 1, "total": 2})
-ctx.table({"columns": [{"key": "name"}], "rows": [{"name": "Ada"}]})
-ctx.link({"kind": "directory", "target": ctx.paths.data})
+<a id="shell"></a>
+
+### Shell 入口与环境变量
+
+**Bash 与 PowerShell。** 从环境变量读取 `TOOLDECK_LOCALE`、`TOOLDECK_PARAM_<KEY>` 和 `TOOLDECK_SETTING_<KEY>`。字段名直接转为大写，保留已有下划线。命名时应确保转换后仍唯一。字符串按原文传递，布尔值为 `true` 或 `false`，数值使用 JSON 数字格式，数组、对象和 null 使用紧凑 JSON。缺失的字段没有对应变量。在 Bash 中用引号包住变量展开，在 PowerShell 中用 `$env:NAME` 读取，布尔值显式比较。普通输出写入 stdout，诊断信息写入 stderr。宿主还提供 `TOOLDECK_TOOL_DIR`、`TOOLDECK_DATA_DIR`、`TOOLDECK_TEMP_DIR`、`TOOLDECK_RUN_ID`、`TOOLDECK_ACTION_ID`、`TOOLDECK_TOOL_ID`、`TOOLDECK_TOOL_VERSION` 和 `TOOLDECK_API_VERSION`。
+
+<a id="ctx-reference"></a>
+
+## 6. ctx 分类清单
+
+Python 和 Node.js 的操作及 hook 均接收以下上下文。Python 的 `params`、`settings` 是字典（例如 `ctx.params["name"]`），Node.js 中是对象（例如 `ctx.params.name`）。路径在两种语言中都通过属性访问，例如 `ctx.paths.data`。hook 事件通过独立的第二个参数 `event` 传入，不是 `ctx` 属性。Shell 脚本使用环境变量，不提供 `ctx` 对象。
+
+| 分类 | 属性 | 类型 | 含义 |
+| --- | --- | --- | --- |
+| 调用身份 | [`ctx.apiVersion`](#ctx-property-apiVersion) | 字符串 | 宿主 API 版本，当前为 `1.0.0`。 |
+| 调用身份 | [`ctx.runId`](#ctx-property-runId) | 字符串 | 本次调用的 ID；hook 有独立的运行 ID。 |
+| 调用身份 | [`ctx.toolId`](#ctx-property-toolId) | 字符串 | 清单声明的工具 ID。 |
+| 调用身份 | [`ctx.toolVersion`](#ctx-property-toolVersion) | 字符串 | 清单声明的工具版本。 |
+| 调用身份 | [`ctx.actionId`](#ctx-property-actionId) | 字符串 | 本次调用所属的操作 ID。 |
+| 输入与语言 | [`ctx.locale`](#ctx-property-locale) | 字符串 | 应用显示语言：`en` 或 `zh-CN`。 |
+| 输入与语言 | [`ctx.params`](#ctx-property-params) | 对象／字典 | 包含已解析默认值的输入快照。hook 中无关的必填参数可能缺失；更新表单不会修改此快照。 |
+| 输入与语言 | [`ctx.settings`](#ctx-property-settings) | 对象／字典 | 已解析的工具设置，包含已配置的秘密字段；不要将秘密写入日志。 |
+| 路径 | [`ctx.paths.tool`](#ctx-property-paths-tool) | 字符串 | 工具包目录。 |
+| 路径 | [`ctx.paths.data`](#ctx-property-paths-data) | 字符串 | 工具的持久数据目录。 |
+| 路径 | [`ctx.paths.temp`](#ctx-property-paths-temp) | 字符串 | 本次调用的临时目录。 |
+
+| 分类 | 函数 | 参数及行为 |
+| --- | --- | --- |
+| 结果与展示 | [`ctx.log(message, level)`](#ctx-log) | 输出字符串日志。级别可省略，默认为 `info`；也支持 `debug`、`warning`、`error`。 |
+| 结果与展示 | [`ctx.json(value)`](#ctx-json) | 输出可 JSON 序列化的结果。 |
+| 结果与展示 | [`ctx.progress(update)`](#ctx-progress) | 更新进度控件，传入 `{message}` 或 `{value, total, message?}`。数值必须有限，`total > 0`，且 `0 <= value <= total`。 |
+| 结果与展示 | [`ctx.link(link)`](#ctx-link) | 添加链接，传入 `{kind, target, label?}`。`kind` 为 `file`、`directory` 或 `url`；文件系统路径须为绝对路径，网址须使用 HTTP(S)。 |
+| 结果与展示 | [`ctx.table(table)`](#ctx-table) | 输出 `{columns, rows}`。列包含唯一的 `key` 字符串和可选的 `label` 字符串；每行是对象。详见下方表格说明。 |
+| 结果与展示 | [`ctx.details(section)`](#ctx-details) | 向折叠区追加文本，传入 `{id, title, text}`。同一次调用中，相同 ID 的文本追加到同一折叠区。 |
+| 表单与输出控制 | [`ctx.updateParams(patch)`](#ctx-updateparams) | 更新所属操作的表单值或展示属性。操作和 hook 均可调用；过期 hook 及 `actionClose` 的表单更新会被忽略。详见后文表单更新说明。 |
+| 表单与输出控制 | [`ctx.clearOutput()`](#ctx-clearoutput) | 清空所属操作的整个输出区，不重置表单或停止任务。 |
+
+上表的对象写法用于说明字段，并非 Python 调用语法。Python 应传入字典，例如 `ctx.progress({"value": 1, "total": 2})`。这些输出函数用于发送事件，不返回服务结果或更新后的表单值。
+
+<a id="ctx-properties"></a>
+
+## 7. ctx 属性逐项说明
+
+<a id="ctx-property-params"></a>
+
+### `ctx.params`
+
+本次操作或 hook 的输入快照，包含默认值。Node.js 用 `ctx.params.name`，Python 用 `ctx.params["name"]`。hook 中参数可能尚未填全，读取可选值时先检查是否存在；`updateParams` 不会反向修改这个快照。
+
+<a id="ctx-property-settings"></a>
+
+### `ctx.settings`
+
+工具级设置，作用于该工具的所有操作。Node.js 通过属性读取，Python 通过字典读取。密钥字段也包含在内，密码遮罩不意味着脚本无法读取；不要输出这些值。
+
+<a id="ctx-property-locale"></a>
+
+### `ctx.locale`
+
+应用当前显示语言，值为 `en` 或 `zh-CN`。用它选择脚本输出、表格列标题和链接标签；清单内的语言映射由宿主解析。
+
+<a id="ctx-property-apiVersion"></a>
+
+### `ctx.apiVersion`
+
+执行协议版本，当前为 `1.0.0`。它与工具包的 `version` 不同；清单的 `hostApi` 声明兼容的协议范围。
+
+<a id="ctx-property-runId"></a>
+
+### `ctx.runId`
+
+本次调用的标识。正式操作和每次 hook 调用均有各自的 ID，可用于关联调用级诊断；不要将它作为工具的持久身份。
+
+<a id="ctx-property-actionId"></a>
+
+### `ctx.actionId`
+
+当前调用所属的操作键。hook 在工具级声明；需要只对特定操作响应时，判断此值，例如 `ctx.actionId === "greetOnOpen"`。
+
+<a id="ctx-property-toolId"></a>
+
+### `ctx.toolId`
+
+清单中稳定的工具 ID。升级时保持不变，用于区分不同工具；不要与显示名称混用。
+
+<a id="ctx-property-toolVersion"></a>
+
+### `ctx.toolVersion`
+
+当前安装的工具包版本，即清单中的 SemVer `version`。可用于诊断中标识脚本版本。
+
+<a id="ctx-property-paths-tool"></a>
+
+### `ctx.paths.tool`
+
+工具包根目录，用于读取随包分发的资源。操作进程也以此为工作目录；不要依赖用户启动应用时的目录。
+
+<a id="ctx-property-paths-data"></a>
+
+### `ctx.paths.data`
+
+工具的持久数据目录，用于会话、缓存和其他跨调用状态。用户指定的最终产物位置仍应从操作参数读取。
+
+<a id="ctx-property-paths-temp"></a>
+
+### `ctx.paths.temp`
+
+本次调用的临时工作目录，用于中间文件。需要后续调用读取的数据应写入 `ctx.paths.data`，不要依赖临时文件长期保留。
+
+<a id="ctx-output-functions"></a>
+
+## 8. ctx 输出函数逐项说明
+
+<a id="ctx-log"></a>
+
+### `ctx.log(message, level = "info")`
+
+输出一条文本日志。`message` 必须为字符串；`level` 可选 `debug`、`info`、`warning`、`error`。普通 stdout/stderr 也会进入文本日志。输出会被记录，避免包含密钥。
+
+~~~js
+ctx.log("Processing");
+ctx.log("No matching files", "warning");
 ~~~
 
-用 `ctx.output(value)` 输出 JSON 结果。`ctx.log(message, level)` 默认级别为 info，也可选 debug、warning、error。进度可以只提供消息，或给出有限数值和正的总量，当前值必须在零和总量之间。表格包含唯一列键、可选标签和行对象。链接支持绝对路径的文件或目录，以及 HTTP(S) 网址，可附显示标签。点击文件链接会在目录中定位文件。普通 stdout/stderr 会显示为文本日志。ToolDeck 会保存运行记录，避免将密钥写入输出。
+<a id="ctx-json"></a>
 
-### 可折叠输出
+### `ctx.json(value)`
+
+用于展示 JSON 数据，宿主保留值的结构和类型；`ctx.log` 则用于带级别的文本日志。它不是操作返回值，也不代表下游数据传递机制。
+
+输出一个 JSON 结果，用于字符串、列表或结构化数据。只能传递可 JSON 序列化的值，不要传入循环引用、函数或非有限数值。每次调用追加一条输出，不会替换之前的结果。
+
+~~~js
+ctx.json({count: 2, files: ["a.txt", "b.txt"]});
+~~~
+
+<a id="ctx-progress"></a>
+
+### `ctx.progress(update)`
+
+更新独立的进度控件。可只传 `{message}`；若提供 `value` 或 `total`，则必须同时提供两者，且均为有限数值，`total > 0`、`0 <= value <= total`。`message` 可与数值一起提供。
+
+~~~js
+ctx.progress({message: "Preparing"});
+ctx.progress({value: 1, total: 2, message: "Processing files"});
+~~~
+
+<a id="ctx-link"></a>
+
+### `ctx.link(link)`
+
+在独立链接区添加入口。`kind` 为 `file`、`directory` 或 `url`，`target` 为绝对文件系统路径或 HTTP(S) 网址，`label` 可省略。文件链接在目录中定位文件，目录链接打开目录。
+
+~~~js
+ctx.link({kind: "directory", target: ctx.paths.data, label: "Data folder"});
+ctx.link({kind: "url", target: "https://example.org", label: "Website"});
+~~~
+
+<a id="ctx-details"></a>
+
+### `ctx.details(section)`
 
 Python 和 Node.js 可通过 `ctx.details({id, title, text})` 向默认收起的区域追加纯文本。每次运行中，相同 ID 的片段按原样连续拼接，中间不会插入时间戳或分隔符。需要换行时，在 `text` 中传入换行符；要显示另一个区域，请使用不同的 ID。
 
@@ -225,7 +350,9 @@ ctx.details({"id": "diagnostics", "title": "Diagnostics", "text": "Checking "})
 ctx.details({"id": "diagnostics", "title": "Diagnostics", "text": "files…\n"})
 ~~~
 
-### 用 `ctx.table` 输出表格
+<a id="ctx-table"></a>
+
+### `ctx.table(table)`
 
 一次操作产生多条同类结果时（例如一批文件及其大小），可将它们放进一张表。每次调用都会在结果区追加一张独立表格。Python 和 Node.js 使用相同的 JSON 数据结构。
 
@@ -258,11 +385,136 @@ def main(ctx):
 
 这个例子会生成两行可点击的结果。目录行没有提供 `bytes`，因此大小一栏留空。相同写法的 JavaScript 入口见 [Node.js 表格示例](../examples/node-example/table.mjs)。如需翻译列标题和链接标签，请在调用 `ctx.table` 前根据 `ctx.locale` 选择文字。
 
-### Shell 脚本
+<a id="ctx-controls"></a>
 
-**Bash 与 PowerShell。** 从环境变量读取 `TOOLDECK_LOCALE`、`TOOLDECK_PARAM_<KEY>` 和 `TOOLDECK_SETTING_<KEY>`。字段名直接转为大写，保留已有下划线。命名时应确保转换后仍唯一。字符串按原文传递，布尔值为 `true` 或 `false`，数值使用 JSON 数字格式，数组、对象和 null 使用紧凑 JSON。缺失的字段没有对应变量。在 Bash 中用引号包住变量展开，在 PowerShell 中用 `$env:NAME` 读取，布尔值显式比较。普通输出写入 stdout，诊断信息写入 stderr。宿主还提供 `TOOLDECK_TOOL_DIR`、`TOOLDECK_DATA_DIR`、`TOOLDECK_TEMP_DIR`、`TOOLDECK_RUN_ID`、`TOOLDECK_ACTION_ID`、`TOOLDECK_TOOL_ID`、`TOOLDECK_TOOL_VERSION` 和 `TOOLDECK_API_VERSION`。
+## 9. ctx 表单与输出控制
 
-## 提供双语内容并验证工具包
+<a id="ctx-updateparams"></a>
+
+### `ctx.updateParams(patch)`
+
+正式操作也可以调用 `ctx.updateParams(patch)`，例如在操作成功后复位一次性勾选框。
+
+Python 和 Node.js 的 hook 可以调用 `ctx.updateParams(patch)`。补丁的键必须是当前操作已声明的参数名。一次调用中的修改一起生效，任一字段或值无效时整批拒绝。`ctx.params` 始终是本轮调用开始时的快照。写回会刷新表单并重新计算显隐条件，不会再次触发 `paramsChange`。过期 hook 调用不能写回。切换操作或工具会在本次应用会话内保留各操作的参数和动态修改。运行任务的参数更新会写回所属操作保存的表单，即使当前正在查看其他工具。替换或删除工具包时会清除保存的表单。
+
+| 属性 | 行为 |
+| --- | --- |
+| `value` | 设置符合字段 schema 的 JSON 值。只有 schema 允许时才能显式设置 `null`。 |
+| `unset: true` | 移除字段值，包括预填的默认值。要清空选择时使用它，不与 `value` 同时提供。 |
+| `options` | 用 `{value, label?}` 对象数组替换下拉选项。值必须唯一且满足字段 schema；标签可省略，指定时须为非空字符串。空数组表示没有候选项。 |
+| `visible` | 布尔值。只有该标志与 `availableWhen` 都允许时才显示。隐藏字段免于必填检查，已提供的值仍需校验。 |
+
+若选项在运行时才能确定，声明 `ui.component: select` 和基础 schema，例如 `{type: string}`。若同时声明了 `schema.enum`，动态选项只能是它的子集。旧选中值不在新列表中时，须在同一个补丁里选定新值或提供 `unset: true`。正式运行前，宿主会再次按当前选项校验提交值。若显隐完全取决于其他参数的值，优先使用 `availableWhen`。
+
+~~~js
+ctx.updateParams({
+  sourceFile: {
+    options: names.map(value => ({value, label: value})),
+    visible: names.length > 0,
+    ...(names.length ? {value: names[0]} : {unset: true}),
+  },
+});
+~~~
+
+可在 [Node.js 示例 manifest](../examples/node-example/manifest.yaml) 中选择 **Inspect a folder**。[目录 hook](../examples/node-example/list-files.mjs) 会在切换目录时尽量保留同名文件，否则选中第一个文件；目录为空时清空选中值并隐藏下拉框。
+
+<a id="ctx-clearoutput"></a>
+
+### `ctx.clearOutput()`
+
+`ctx.clearOutput()` 清空所属操作输出区当前已有的全部内容，包括所有 hook 输出、运行日志、JSON、表格、折叠区、进度、链接和系统完成提示。它不重置表单、不停止任务，也不删除磁盘文件或日志；之后到达的新输出继续展示。切换页面后，清空仍作用于发起调用的操作，不会清空其他工具或操作。过期 hook 的清空请求会被忽略。
+
+~~~js
+ctx.clearOutput();
+ctx.log("Output cleared");
+~~~
+
+<a id="hooks"></a>
+
+## 10. hook 分类与事件说明
+
+| 事件 | 触发时机 | 事件参数 |
+| --- | --- | --- |
+| `paramsChange` | 用户提交参数变化 | `type`、`changedKeys`；支持 `paramKeys` 过滤 |
+| `actionOpen` | 进入操作页面，或当前页面的环境安装就绪 | 仅 `type`，不允许 `paramKeys` |
+| `actionClose` | 离开操作页面 | 仅 `type`，不允许 `paramKeys` |
+| `actionReset` | 手动点击重置按钮，完成表单和输出重置后 | 仅 `type`，不允许 `paramKeys` |
+
+### `paramsChange`
+
+在与 `actions` 同级的 `hooks` 中声明自动执行的入口。用户提交参数变化时，宿主调用匹配的入口；导入确认弹窗会列出这些自动执行项。以下配置来自 [Node.js 示例](../examples/node-example/preview-name.mjs)：
+
+~~~yaml
+hooks:
+  previewName:
+    event: paramsChange
+    entry: preview-name.mjs
+    paramKeys: [name]
+~~~
+
+每个 hook 需要唯一 ID、事件名和相对于包根目录的入口文件。监听参数编辑使用 `paramsChange`。可选的 `paramKeys` 仅用于此事件，宿主在启动进程前按操作参数名过滤。省略时监听所有操作参数；填写时至少指定一个键，各键不能重复，且必须在至少一个操作中声明。修改工具设置不会触发此事件。
+
+- 单行、多行、密码、数字、JSON 和 tags 输入框在离焦时提交。手动输入文件或目录路径也遵循此规则。改完又改回原值，离焦时不会触发。
+- 下拉框、复选框、对话框确认选择及多选文件移除会立即提交。取消选择、填充默认值和切换操作不会触发 `paramsChange`。
+- Node.js 导出 `main(ctx, event)`，Python 定义 `main(ctx, event)`。Bash 和 PowerShell 从 `TOOLDECK_EVENT` 环境变量读取 JSON 事件，用标准输出和标准错误输出文本。事件包含 `type: "paramsChange"` 和实际变化的参数名数组 `changedKeys`。`ctx.actionId` 标识当前操作，`ctx.params` 包含当前表单值及默认值，其他必填字段此时可能尚未填写。
+
+~~~js
+export function main(ctx) {
+  ctx.clearOutput();
+  if (ctx.params.name) ctx.log(`Name for this greeting: ${ctx.params.name}`);
+}
+~~~
+
+直接返回时，历史输出保留；再次输出时，内容追加。Python 和 Node.js 的 hook 可调用 `ctx.clearOutput()`，清空所属操作的整个输出区。再次触发同一个 hook 后，宿主忽略上一次调用迟到的输出和清空请求。hook 需要兼容且已就绪的运行环境，超时为 30 秒。正式操作仍由用户点击运行来启动。
+
+### `actionOpen`
+
+进入时接收当前表单快照。需要打开即问候时，在 hook 中判断操作 ID 并调用 `ctx.log`；示例见 [Greeting on open](../examples/node-example/lifecycle.mjs)。
+
+### `actionClose`
+
+离开时接收旧页面最后的表单快照。可用于保存页面状态；其 `updateParams` 写回会被忽略。它不是任务结束或应用退出事件。
+
+### `actionReset`
+
+用户手动点击重置按钮后触发。`ctx.params` 是重置后的默认参数快照，动态选项与显隐修改已移除，旧输出已清空。hook 可以输出重置提示或通过 `ctx.updateParams` 初始化表单。切换页面、导入工具、调用 `ctx.clearOutput()` 或 `ctx.updateParams()` 不会触发此事件。工具环境须已就绪；运行期间重置按钮不可用。
+
+~~~yaml
+hooks:
+  onReset: { event: actionReset, entry: reset.mjs }
+~~~
+
+~~~js
+export function main(ctx, event) {
+  ctx.log("Form reset");
+}
+~~~
+
+### 生命周期规则与声明示例
+
+操作显示时触发 `actionOpen`，离开时触发 `actionClose`。切换操作下拉框、从左侧选择另一个工具，以及离开或返回“操作”标签页，都遵循这条规则。编辑参数或重复选择当前操作不会重复触发生命周期事件。只有已安装且兼容当前平台的工具才执行 hook。如果当前操作仍然可见，安装成功后会触发一次打开事件。
+
+~~~yaml
+hooks:
+  onOpen: { event: actionOpen, entry: lifecycle.mjs }
+  onClose: { event: actionClose, entry: lifecycle.mjs }
+~~~
+
+通过 `ctx.actionId` 读取操作 ID，通过 `event.type` 区分事件。这两个事件没有 `changedKeys`，也不能配置 `paramKeys`。关闭事件收到离开前的表单快照，打开事件收到进入时的快照。切换时先调度旧操作的关闭，再调度新操作的打开；页面切换不等待脚本执行完毕。关闭事件的输出归属旧操作，对表单的写回会被忽略。这两个事件用于应用内导航，不保证在退出应用时执行。可参考 [Node.js 生命周期示例](../examples/node-example/lifecycle.mjs)。
+
+页面的打开、关闭与任务的开始、结束相互独立。运行中切换工具仍会触发页面生命周期 hook，但不会停止任务。关闭 hook 不应取消运行任务或清理任务仍在使用的资源；离开页面时尚未完成的 `paramsChange` hook 会被取消，其迟到的更新会被忽略。
+
+<a id="session-state"></a>
+
+## 11. 切换、重置与输出顺序
+
+在本次应用会话内，切换操作或工具会保留每个操作的表单和最近一次运行输出。点击“重置”会恢复当前操作在清单中声明的默认值、移除动态表单修改，并清空该操作的运行和 hook 输出，不影响其他操作。重置会取消该操作尚未完成的 hook 并忽略迟到的回复；手动重置完成后会触发 `actionReset`，传入恢复默认值后的表单；不会触发 `paramsChange`、`actionOpen` 或 `actionClose`。工具有任务运行时不可重置。重置不会删除工具生成的文件或磁盘日志。
+
+日志、普通输出、表格和完成提示按前端接收顺序统一排列，并显示接收时间；同一毫秒内仍保持先后顺序。hook 与正式操作的输出不再固定分组。进度条、链接单独展示；折叠区位于首次出现的位置，后续片段追加到该区。
+
+<a id="localization"></a>
+
+## 12. 本地化与发布验证
 
 [Python 示例](../examples/python-example/manifest.yaml)和 [Bash 示例](../examples/bash-example/manifest.yaml)演示多语言写法：字段标签使用语言映射，文档分别提供英文和简体中文版，脚本也会根据应用语言选择输出文字。[Node.js 示例](../examples/node-example/manifest.yaml)和 [PowerShell 示例](../examples/pws-example/manifest.yaml)演示单语言写法：直接填写英文字符串，在两种应用语言下都显示相同的英文。
 

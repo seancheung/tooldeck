@@ -9,6 +9,6 @@ export async function main(ctx) {
   }
   const target = path.join(folder, sourceFile);
   const file = await stat(target);
-  ctx.output({name: sourceFile, bytes: file.size});
+  ctx.json({name: sourceFile, bytes: file.size});
   ctx.link({kind: 'file', target, label: sourceFile});
 }

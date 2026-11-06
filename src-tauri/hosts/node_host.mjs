@@ -14,7 +14,7 @@ function serializable(value) {
   function visit(v) {
     if (v === null || typeof v === 'string' || typeof v === 'boolean') return;
     if (typeof v === 'number' && Number.isFinite(v)) return;
-    if (typeof v !== 'object' || seen.has(v)) throw new TypeError('ctx.output requires JSON values');
+    if (typeof v !== 'object' || seen.has(v)) throw new TypeError('Event payload requires JSON values');
     seen.add(v);
     for (const item of Object.values(v)) visit(item);
     seen.delete(v);
@@ -40,13 +40,16 @@ try {
   const { hookEvent, ...metadata } = context;
   const ctx = {
     ...metadata,
-    clearOutput: hookEvent ? () => emit('clearOutput', null) : hookId => emit('clearOutput', {hookId}),
+    clearOutput(...args) {
+      if (args.length) throw new TypeError('clearOutput takes no arguments');
+      emit('clearOutput', null);
+    },
     updateParams: patch => emit('updateParams', patch),
     log(message, level = 'info') {
       if (typeof message !== 'string' || !['debug', 'info', 'warning', 'error'].includes(level)) throw new TypeError('Invalid log');
       emit('log', { message, level });
     },
-    output(value) { emit('output', value); },
+    json(value) { emit('output', value); },
     details({id, title, text}) {
       if (typeof id !== 'string' || !id.trim() || typeof title !== 'string' || !title.trim() || typeof text !== 'string') {
         throw new TypeError('Details require an id, title and text');

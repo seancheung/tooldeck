@@ -2,12 +2,15 @@ import { nativeMessage } from './nativeMessages';
 import { LocaleContext, translate, useTranslator } from './i18n';
 import remarkExplicitLinks from './remarkExplicitLinks';
 import { ImportDialog, type ImportResult } from './ImportDialog';
+import { DeleteToolDialog, type DeleteOptions } from './DeleteToolDialog';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { SplitWorkspace } from './SplitWorkspace';
 import { ToolIcon } from './ToolIcon';
-import { applyPatch, formFields, newForm, type ParamForm, type ParamPatch } from './paramForm';
+import { formFields, newForm, type ParamForm, type ParamPatch } from './paramForm';
+import { ParamSessions, toolScope, actionScope } from './paramSessions';
 import { useParamHooks } from './useParamHooks';
-import { appendOutputEvent } from './outputEvents';
+import { appendOutputEvent, stampOutputEvent, chronologicalOutput } from './outputEvents';
+import { latestToolRuns, clearActionRun, clearRunOutput } from './runState';
 import { OutputTable } from './OutputTable';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
@@ -20,6 +23,15 @@ import { FieldForm, defaults } from './FieldForm';
 import type { Config, Detection, Event, Json, Run, Tool } from './types';
 
 const runtimeLabel: Record<string,string> = { python: 'Python', nodejs: 'Node.js', bash: 'Bash', powershell: 'PowerShell' };
+
+function ToolStatus({tool, run}: {tool: Tool; run?: Run}) {
+  const tr = useTranslator();
+  const status = run?.status === 'running' ? 'running' : !tool.compatible ? 'unsupported' : !tool.installed ? 'uninstalled' : run?.status;
+  if (!status) return null;
+  const label = tr({running:'Running', unsupported:'Unsupported platform', uninstalled:'Not installed', success:'Completed', error:'Failed', cancelled:'Cancelled'}[status]);
+  const Icon = {running:CircleNotchIcon, unsupported:WarningCircleIcon, uninstalled:DownloadSimpleIcon, success:CheckCircleIcon, error:WarningCircleIcon, cancelled:StopIcon}[status];
+  return <span className={`tool-status ${status}`} title={label} role="img" aria-label={label}><Icon size={16} className={status === 'running' ? 'spin' : undefined} aria-hidden="true"/></span>;
+}
 
 export default function App() {
   const [tools, setTools] = useState<Tool[]>([]);
@@ -38,14 +50,29 @@ export default function App() {
   const [formOwner, setFormOwner] = useState('');
   const [eventsReady, setEventsReady] = useState(false);
   const [form, setFormState] = useState(() => newForm());
+  const [formReset, setFormReset] = useState(0);
   const currentForm = useRef(form);
+  const sessions = useRef(new ParamSessions());
+  const currentScope = useRef('');
   const setForm = useCallback((next: ParamForm) => {
+    if (currentScope.current) sessions.current.forms.set(currentScope.current, next);
     currentForm.current = next;
     setFormState(next);
   }, []);
-  const patchForm = useCallback((patch: ParamPatch) => setForm(applyPatch(currentForm.current, patch)), [setForm]);
+  const patchForm = useCallback((patch: ParamPatch, scope: string) => {
+    const next = sessions.current.patch(scope, patch);
+    if (next && scope === currentScope.current) setForm(next);
+  }, [setForm]);
+  function selectAction(t: Tool, id: string) {
+    const saved = sessions.current.select(t, id, defaults(t.manifest.actions[id]?.params));
+    currentScope.current = saved.scope;
+    setActionId(id);
+    setForm(saved.form);
+  }
+  const [settingsReset, setSettingsReset] = useState(0);
   const [toolSettings, setToolSettings] = useState<Record<string,Json>>({});
   const [runs, setRuns] = useState<Record<string,Run>>({});
+  const clearRun = useCallback((scope: string) => setRuns(current => clearRunOutput(current, scope)), []);
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
@@ -54,6 +81,7 @@ export default function App() {
   const sidebar = useRef<HTMLElement>(null);
   const importLock = useRef(false);
   const [deleting, setDeleting] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Tool>();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [config, setConfig] = useState<Config>();
   const locale = config?.locale ?? (/^zh(?:-|$)/i.test(navigator.language) ? 'zh-CN' : 'en');
@@ -66,13 +94,25 @@ export default function App() {
   const tool = tools.find(t => t.manifest.id === selected);
   const needsInstall = tool?.manifest.runtime.kind === 'python' || !!tool?.manifest.dependencies;
   const action = tool?.manifest.actions[actionId];
-  const run = runs[selected];
-  const hooks = useParamHooks(tool, actionId, form, patchForm, eventsReady && formOwner === selected && tab === 'actions', tools);
-  const outputEvents = [...hooks.events, ...(run?.events ?? [])];
-  const activeRun = run?.status === 'running' ? run : undefined;
+  const scope = tool ? actionScope(tool, actionId) : '';
+  const toolRuns = latestToolRuns(runs);
+  const run = runs[scope];
+  const hooks = useParamHooks(tool, actionId, form, patchForm, eventsReady && formOwner === selected && !!tool && currentScope.current === actionScope(tool, actionId) && tab === 'actions', tools, clearRun);
+  const outputEvents = chronologicalOutput([...hooks.events, ...(run?.events ?? [])]);
+  const activeRun = toolRuns[selected]?.status === 'running' ? toolRuns[selected] : undefined;
   const busy = Boolean(activeRun) || deleting;
   const formDisabled = busy || !tool?.installed || !tool.compatible;
   const anyBusy = deleting || Object.values(runs).some(r => r.status === 'running');
+
+  function resetAction() {
+    if (!tool || busy || !actionId) return;
+    hooks.reset();
+    const next = newForm(defaults(action?.params));
+    setForm(next);
+    setFormReset(value => value + 1);
+    setRuns(current => clearActionRun(current, scope));
+    hooks.notifyReset(next);
+  }
 
   async function refresh(prefer?: string) {
     const list = await invoke<Tool[]>('list_tools');
@@ -81,14 +121,15 @@ export default function App() {
   }
   useEffect(() => {
     let disposed = false; let unlisten: (()=>void)|undefined;
-    listen<Event>('tooldeck:event', ({ payload }) => {
+    listen<Event>('tooldeck:event', ({ payload: incoming }) => {
+      const payload = stampOutputEvent(incoming);
       try { if (hooks.receive(payload)) return; }
       catch (error) { setMessage(String(error)); return; }
       setRuns(current => {
         const pair = Object.entries(current).find(([,r]) => r.id === payload.runId);
         if (!pair) return current;
         const [key, previous] = pair;
-        return { ...current, [key]: { ...previous, events: appendOutputEvent(previous.events, { ...payload, time: new Date().toLocaleTimeString(document.documentElement.lang || 'en',{hour12:false}) }) } };
+        return { ...current, [key]: { ...previous, events: appendOutputEvent(previous.events, payload) } };
       });
     }).then(fn => { if (disposed) fn(); else { unlisten = fn; setEventsReady(true); } }).catch(e=>setMessage(String(e)));
     Promise.all([refresh(), invoke<Config>('get_config').then(setConfig), invoke<Detection>('detect_runtimes').then(setDetection)]).catch(e => setMessage(String(e))).finally(()=>setLoading(false));
@@ -96,16 +137,20 @@ export default function App() {
   }, []);
   useEffect(() => {
     setFormOwner(selected);
-    setTab('actions'); const t = tools.find(t=>t.manifest.id===selected); const id = Object.keys(t?.manifest.actions || {})[0] || '';
-    setActionId(id); setForm(newForm(defaults(t?.manifest.actions[id]?.params))); setToolSettings(t?.settings || {}); setDocumentId(t?.manifest.docs[0]?.id || '');
-  }, [selected]);
+    setTab('actions'); const t = tools.find(t=>t.manifest.id===selected);
+    const saved = t && sessions.current.actions.get(toolScope(t));
+    const id = saved && t?.manifest.actions[saved] ? saved : Object.keys(t?.manifest.actions || {})[0] || '';
+    if (t) selectAction(t, id);
+    else { currentScope.current = ''; setActionId(''); setForm(newForm()); }
+    setToolSettings(t?.settings || {}); setDocumentId(t?.manifest.docs[0]?.id || '');
+  }, [selected, tool?.directory, tool?.manifest.version]);
   useEffect(() => {
     const docs = tool?.manifest.docs ?? [];
     setDocumentId(current => docs.some(doc => doc.id === current) ? current : docs[0]?.id ?? '');
     if (!docs.length && tab === 'docs') setTab('actions');
   }, [tool?.manifest.docs, tab]);
   useEffect(() => { if (!tool || tab !== 'docs' || !documentId) return; let stale=false; setMarkdown(''); invoke<string>('read_document', { id: selected, documentId }).then(text=>{if(!stale)setMarkdown(text);}).catch(e=>{if(!stale)setMessage(String(e));}); return ()=>{stale=true;}; },[selected, documentId, tab, locale]);
-  useEffect(()=>{ logEnd.current?.scrollIntoView({block:'nearest'}); },[run?.events.length]);
+  useEffect(()=>{ logEnd.current?.scrollIntoView({block:'nearest'}); },[outputEvents.length]);
   useEffect(()=>{ localStorage.setItem('tooldeck:favorites', JSON.stringify(favorites)); },[favorites]);
 
   function cancelImport() { setPendingImport(undefined); importLock.current = false; }
@@ -128,11 +173,15 @@ export default function App() {
     setImporting(true);
     try {
       const result = await invoke<ImportResult>('import_tool', { path: pendingImport.path, confirmation: pendingImport.details });
-      await refresh(result.id);
       const imported = await invoke<Tool[]>('list_tools');
       const updated = imported.find(t => t.manifest.id === result.id);
-      if (updated) { const first = Object.keys(updated.manifest.actions)[0] || ''; setActionId(first); setForm(newForm(defaults(updated.manifest.actions[first]?.params))); setToolSettings(updated.settings); setDocumentId(updated.manifest.docs[0]?.id || ''); setTab('actions'); }
-      setRuns(current => { const next = { ...current }; delete next[result.id]; return next; });
+      const previous = tools.find(t => t.manifest.id === result.id);
+      if (previous) { hooks.forget(previous); sessions.current.forget(previous); }
+      if (updated) { const first = Object.keys(updated.manifest.actions)[0] || ''; hooks.forget(updated); sessions.current.forget(updated); selectAction(updated, first); setToolSettings(updated.settings); setDocumentId(updated.manifest.docs[0]?.id || ''); setTab('actions'); }
+      setRuns(current => Object.fromEntries(Object.entries(current).filter(([,run]) => run.toolId !== result.id)));
+      setTools(imported);
+      setSelected(result.id);
+      setFormReset(value => value + 1);
     } catch (e) { setMessage(String(e)); }
     finally { setImporting(false); cancelImport(); }
   }
@@ -159,25 +208,34 @@ export default function App() {
       } catch (e) { setMessage(String(e)); return; }
     }
     const id = crypto.randomUUID(); const toolId=selected;
+    const runScope = actionScope(tool, actionId);
     if (operation === 'run') hooks.trackAction(id);
-    setRuns(current=>({...current,[toolId]:{id,toolId,operation,status:'running',events:[],started:Date.now()}})); setTab('actions');
+    const params = structuredClone(currentForm.current.values);
+    setRuns(current=>({...current,[runScope]:{id,toolId,operation,actionId:operation==='run'?actionId:undefined,actionName:operation==='run'?action?.name:undefined,params,status:'running',events:[],started:Date.now()}})); setTab('actions');
     try {
-      const result = await invoke<string>('execute_job', { id:toolId, runId:id, operation, actionId, params:currentForm.current.values, formOverrides:currentForm.current.overrides });
-      setRuns(current=>({...current,[toolId]:{...current[toolId],status:'success',ended:Date.now(),message:result}}));
+      const result = await invoke<string>('execute_job', { id:toolId, runId:id, operation, actionId, params, formOverrides:currentForm.current.overrides });
+      const completion = stampOutputEvent({runId:id,type:'completion',payload:{status:'success',message:result}});
+      setRuns(current=>({...current,[runScope]:{...current[runScope],status:'success',ended:completion.receivedAt,message:result,events:appendOutputEvent(current[runScope].events,completion)}}));
     } catch(e) {
-      const text=String(e); setRuns(current=>({...current,[toolId]:{...current[toolId],status:text==='Cancelled'?'cancelled':'error',ended:Date.now(),message:text}}));
+      const text=String(e), status=text==='Cancelled'?'cancelled':'error';
+      const completion = stampOutputEvent({runId:id,type:'completion',payload:{status,message:text}});
+      setRuns(current=>({...current,[runScope]:{...current[runScope],status,ended:completion.receivedAt,message:text,events:appendOutputEvent(current[runScope].events,completion)}}));
     } finally { await refresh(); }
   }
-  async function deleteTool() {
-    if (!tool || busy) return;
+  async function deleteTool(options: DeleteOptions) {
+    const tool = deleteTarget;
+    if (!tool || deleting || toolRuns[tool.manifest.id]?.status === 'running') return;
     const id = tool.manifest.id;
-    if (!await confirm(tr("Delete “{name}”, including its scripts, dependencies and settings?", { name: tool.manifest.name }), { title: tr("Delete tool"), kind: 'warning', okLabel: tr("Delete"), cancelLabel: tr("Cancel") })) return;
     setDeleting(true);
     try {
-      await invoke('execute_job', { id, runId: crypto.randomUUID(), operation: 'delete', actionId: null, params: null });
+      await invoke('execute_job', { id, runId: crypto.randomUUID(), operation: 'delete', actionId: null, params: options });
+      hooks.forget(tool);
+      sessions.current.forget(tool);
+      if (currentScope.current && JSON.parse(currentScope.current)[0] === tool.directory) currentScope.current = '';
       setTools(items => items.filter(item => item.manifest.id !== id));
       setFavorites(items => items.filter(item => item !== id));
-      setRuns(current => { const next = {...current}; delete next[id]; return next; });
+      setRuns(current => Object.fromEntries(Object.entries(current).filter(([,run]) => run.toolId !== id)));
+      setDeleteTarget(undefined);
       await refresh();
     } catch (e) { setMessage(String(e)); } finally { setDeleting(false); }
   }
@@ -198,18 +256,19 @@ export default function App() {
           <button className="group-heading" aria-expanded={expanded[group]} onClick={() => setExpanded(current => ({...current,[group]:!current[group]}))}>
             <span>{label} <span className="group-count">({count})</span></span>{expanded[group]?<CaretUpIcon size={17}/>:<CaretDownIcon size={17}/>}
           </button>
-          {expanded[group]&&<div className="tool-list">{items.map(t=><button key={t.manifest.id} className={`tool-row ${t.compatible ? '' : 'incompatible'} ${selected===t.manifest.id?'selected':''}`} onClick={()=>setSelected(t.manifest.id)}><ToolIcon tool={t}/><span className="tool-name">{t.manifest.name}<small>{!t.compatible ? tr("Unsupported platform") : t.installed ? '' : tr("Not installed")}</small></span><span className="runtime-icon" title={runtimeLabel[t.manifest.runtime.kind]}><img src={`/runtime-icons/${t.manifest.runtime.kind === 'nodejs' ? 'nodejs' : t.manifest.runtime.kind}.svg`} alt={runtimeLabel[t.manifest.runtime.kind]} /></span></button>)}{!items.length&&!loading&&<p className="list-empty">{group==='favorites'?tr("No favorites"):search?tr("No matching tools"):tr("No tools")}</p>}</div>}
+          {expanded[group]&&<div className="tool-list">{items.map(t=><button key={t.manifest.id} className={`tool-row ${t.compatible ? '' : 'incompatible'} ${selected===t.manifest.id?'selected':''}`} onClick={()=>setSelected(t.manifest.id)}><ToolIcon tool={t}/><span className="tool-name" title={t.manifest.name}>{t.manifest.name}</span><ToolStatus tool={t} run={toolRuns[t.manifest.id]}/><span className="runtime-icon" title={runtimeLabel[t.manifest.runtime.kind]}><img src={`/runtime-icons/${t.manifest.runtime.kind === 'nodejs' ? 'nodejs' : t.manifest.runtime.kind}.svg`} alt={runtimeLabel[t.manifest.runtime.kind]} /></span></button>)}{!items.length&&!loading&&<p className="list-empty">{group==='favorites'?tr("No favorites"):search?tr("No matching tools"):tr("No tools")}</p>}</div>}
         </section>;
       })}</div>
       <div className="sidebar-footer"><button title={tr("Import tool")} aria-label={tr("Import tool")} onClick={importZip} disabled={importing || !!pendingImport}>{importing?<CircleNotchIcon className="spin" size={22}/>:<PlusIcon size={22}/>}<span>{tr("Import tool")}</span></button><button title={tr("App settings")} aria-label={tr("App settings")} onClick={()=>setSettingsOpen(true)}><GearSixIcon size={22}/><span>{tr("App settings")}</span></button></div>
     </aside>
+    {deleteTarget && <DeleteToolDialog tool={deleteTarget} busy={deleting} close={()=>setDeleteTarget(undefined)} submit={deleteTool}/>}
     {pendingImport && <ImportDialog details={pendingImport.details} busy={importing} close={cancelImport} submit={confirmImport}/>}<main className="main">
       {!tool?<div className="empty-library"><CubeIcon size={64} weight="duotone"/><h1>{loading?tr("Loading…"):tr("No tools")}</h1><button className="primary" onClick={importZip}><PlusIcon size={20}/>{tr("Import tool")}</button></div>:<>
-        <header className="tool-header"><div className="tool-heading"><ToolIcon tool={tool} size={42}/><div className="tool-title-content"><h1>{tool.manifest.name}</h1>{tool.manifest.description&&<p className="tool-description">{tool.manifest.description}</p>}<div className="tool-metadata"><span className="tool-version">v{tool.manifest.version}</span><span>{runtimeLabel[tool.manifest.runtime.kind]}</span><span>{needsInstall?(tool.installed?tr("Installed"):tr("Not installed")):tr("No dependencies required")}</span>{!tool.compatible&&<span className="warning-text">{tr("Unsupported platform")}</span>}</div></div></div><div className="header-actions"><button className={`icon-button ${favorites.includes(selected)?'favorited':''}`} aria-label={favorites.includes(selected)?tr("Remove from favorites"):tr("Add to favorites")} title={tr("Add to favorites")} onClick={()=>setFavorites(f=>f.includes(selected)?f.filter(id=>id!==selected):[...f,selected])}><StarIcon weight={favorites.includes(selected)?'fill':'regular'} size={21}/></button><button className="secondary" disabled={busy||!tool.compatible||!needsInstall||tool.installed} onClick={()=>execute('install')}><DownloadSimpleIcon size={17}/>{tr("Install")}</button><button className="secondary" disabled={busy||!needsInstall||!tool.installed} onClick={()=>execute('uninstall')}><MinusCircleIcon size={17}/>{tr("Uninstall")}</button><button className="secondary danger-button" disabled={busy} onClick={deleteTool}><TrashIcon size={17}/>{tr("Delete")}</button></div></header>
+        <header className="tool-header"><div className="tool-heading"><ToolIcon tool={tool} size={42}/><div className="tool-title-content"><h1>{tool.manifest.name}</h1>{tool.manifest.description&&<p className="tool-description">{tool.manifest.description}</p>}<div className="tool-metadata"><span className="tool-version">v{tool.manifest.version}</span><span>{runtimeLabel[tool.manifest.runtime.kind]}</span><span>{needsInstall?(tool.installed?tr("Installed"):tr("Not installed")):tr("No dependencies required")}</span>{!tool.compatible&&<span className="warning-text">{tr("Unsupported platform")}</span>}</div></div></div><div className="header-actions"><button className={`icon-button ${favorites.includes(selected)?'favorited':''}`} aria-label={favorites.includes(selected)?tr("Remove from favorites"):tr("Add to favorites")} title={tr("Add to favorites")} onClick={()=>setFavorites(f=>f.includes(selected)?f.filter(id=>id!==selected):[...f,selected])}><StarIcon weight={favorites.includes(selected)?'fill':'regular'} size={21}/></button><button className="secondary" disabled={busy||!tool.compatible||!needsInstall||tool.installed} onClick={()=>execute('install')}><DownloadSimpleIcon size={17}/>{tr("Install")}</button><button className="secondary" disabled={busy||!needsInstall||!tool.installed} onClick={()=>execute('uninstall')}><MinusCircleIcon size={17}/>{tr("Uninstall")}</button><button className="secondary danger-button" disabled={busy} onClick={()=>setDeleteTarget(tool)}><TrashIcon size={17}/>{tr("Delete")}</button></div></header>
         <nav className="tabs">{([['actions',tr("Actions")],['settings',tr("Tool settings")],['dependencies',tr("Environment")],['docs',tr("Docs")]] as const).filter(([id]) => (id !== 'settings' || Object.keys(tool.manifest.settings).length > 0) && (id !== 'docs' || tool.manifest.docs.length > 0)).map(([id,label])=><button key={id} className={tab===id?'active':''} onClick={()=>setTab(id)}>{label}</button>)}</nav>
-        {tab==='actions'?<SplitWorkspace><form className="parameters" onSubmit={e=>{e.preventDefault();execute('run');}}><div className="parameter-scroll"><div className="field"><label htmlFor="action">{tr("Actions")}</label><select id="action" value={actionId} disabled={formDisabled} onChange={e=>{setActionId(e.target.value);setForm(newForm(defaults(tool.manifest.actions[e.target.value].params)));}}>{Object.entries(tool.manifest.actions).map(([id,a])=><option key={id} value={id}>{a.name}</option>)}</select>{action?.description&&<p className="action-description">{action.description}</p>}</div><FieldForm key={JSON.stringify([selected,actionId,tool.manifest.version])} onCommit={hooks.commit} fields={formFields(action?.params, form)} values={form.values} onChange={values => setForm({...currentForm.current, values})} disabled={formDisabled}/></div><div className="run-footer">{activeRun?<button type="button" className="stop" onClick={()=>invoke('cancel_job',{runId:activeRun.id}).catch(e=>setMessage(String(e)))}><StopIcon size={19} weight="fill"/>{tr(activeRun.operation==='install'?'Stop installation':'Stop run')}</button>:<button className="primary" disabled={formDisabled||hooks.pendingCount>0||!actionId}><PlayIcon size={19} weight="fill"/>{tr("Run")}</button>}</div></form>
-        <section className="output"><div className="output-header"><h2>{tr("Output")}</h2>{run&&<span className={`status ${run.status}`}>{run.status==='running'?<CircleNotchIcon className="spin" size={15}/>:run.status==='success'?<CheckCircleIcon size={15}/>:<WarningCircleIcon size={15}/>}{{running:tr("Running"),success:tr("Completed"),error:tr("Failed"),cancelled:tr("Cancelled")}[run.status]}{run.ended&&' · '+tr("{seconds} s", {seconds:((run.ended-run.started)/1000).toFixed(1)})}</span>}</div>{!run && !hooks.events.length?<div className="output-empty"><TerminalIcon size={38}/><p>{tr("No output")}</p></div>:<div className="output-content">{progress&&<div className="progress"><div><span>{progress.message||tr("Processing")}</span><span>{percent!==undefined?`${percent}%`:''}</span></div>{percent!==undefined && <div className="progress-track"><i style={{width:`${percent}%`}}/></div>}</div>}<div className="links">{outputEvents.filter(e=>e.type==='link').map((e,i)=><button key={i} onClick={()=>openTarget(e.payload.target)}>{e.payload.kind==='directory'?<FolderIcon size={23}/>:e.payload.kind==='url'?<ArrowSquareOutIcon size={23}/>:<FileIcon size={23}/>}<span>{e.payload.label||e.payload.target}</span><CaretRightIcon size={17}/></button>)}</div><div className="log-stream" aria-live="polite">{outputEvents.filter(e=>e.type==='log'||e.type==='output'||e.type==='table'||e.type==='details').map((e,i)=>e.type==='details'?<details className="output-details" key={JSON.stringify([e.runId,e.payload.id])}><summary>{e.payload.title}</summary><pre>{e.payload.text}</pre></details>:<div className={`log-line ${e.payload?.level||''}`} key={i}><time>{e.time?`[${e.time}]`:''}</time>{e.type==='table'?<OutputTable value={e.payload} onOpen={openTarget}/>:e.type==='output'?<pre>{JSON.stringify(e.payload,null,2)}</pre>:<span>{e.payload.message}</span>}</div>)}{run?.message&&<div className={`completion ${run.status}`}>{nativeMessage(locale, run.message)}</div>}<div ref={logEnd}/></div></div>}</section></SplitWorkspace>
-        :tab==='settings'?<form className="settings-content" onSubmit={e=>{e.preventDefault();saveSettings();}}><FieldForm fields={tool.manifest.settings} values={toolSettings} onChange={setToolSettings} disabled={formDisabled}/>{Object.keys(tool.manifest.settings).length?<button className="primary compact" disabled={formDisabled}>{tr("Save settings")}</button>:<div className="quiet-empty">{tr("No settings")}</div>}</form>
+        {tab==='actions'?<SplitWorkspace><form className="parameters" onSubmit={e=>{e.preventDefault();execute('run');}}><div className="parameter-scroll"><div className="field"><label htmlFor="action">{tr("Actions")}</label><select id="action" value={actionId} disabled={formDisabled} onChange={e=>{selectAction(tool,e.target.value);}}>{Object.entries(tool.manifest.actions).map(([id,a])=><option key={id} value={id}>{a.name}</option>)}</select>{action?.description&&<p className="action-description">{action.description}</p>}</div><FieldForm key={JSON.stringify([selected,actionId,tool.manifest.version,formReset])} onCommit={hooks.commit} fields={formFields(action?.params, form)} values={form.values} onChange={values => setForm({...currentForm.current, values})} disabled={formDisabled}/></div><div className="run-footer"><button type="button" className="secondary reset-action" disabled={busy||!actionId} onClick={resetAction} title={tr("Reset form and clear output")}><ArrowClockwiseIcon size={17}/>{tr("Reset")}</button>{activeRun?<button type="button" className="stop" onClick={()=>invoke('cancel_job',{runId:activeRun.id}).catch(e=>setMessage(String(e)))}><StopIcon size={19} weight="fill"/>{tr(activeRun.operation==='install'?'Stop installation':'Stop run')}</button>:<button className="primary" disabled={formDisabled||hooks.pendingCount>0||!actionId}><PlayIcon size={19} weight="fill"/>{tr("Run")}</button>}</div></form>
+        <section className="output"><div className="output-header"><div><h2>{tr("Output")}</h2>{run?.actionName&&<p className="output-action">{run.actionName}</p>}</div>{run&&<span className={`status ${run.status}`}>{run.status==='running'?<CircleNotchIcon className="spin" size={15}/>:run.status==='success'?<CheckCircleIcon size={15}/>:<WarningCircleIcon size={15}/>}{{running:tr("Running"),success:tr("Completed"),error:tr("Failed"),cancelled:tr("Cancelled")}[run.status]}{run.ended&&' · '+tr("{seconds} s", {seconds:((run.ended-run.started)/1000).toFixed(1)})}</span>}</div>{!run && !hooks.events.length?<div className="output-empty"><TerminalIcon size={38}/><p>{tr("No output")}</p></div>:<div className="output-content">{progress&&<div className="progress"><div><span>{progress.message||tr("Processing")}</span><span>{percent!==undefined?`${percent}%`:''}</span></div>{percent!==undefined && <div className="progress-track"><i style={{width:`${percent}%`}}/></div>}</div>}<div className="links">{outputEvents.filter(e=>e.type==='link').map((e,i)=><button key={i} onClick={()=>openTarget(e.payload.target)}>{e.payload.kind==='directory'?<FolderIcon size={23}/>:e.payload.kind==='url'?<ArrowSquareOutIcon size={23}/>:<FileIcon size={23}/>}<span>{e.payload.label||e.payload.target}</span><CaretRightIcon size={17}/></button>)}</div><div className="log-stream" aria-live="polite">{outputEvents.filter(e=>e.type==='log'||e.type==='output'||e.type==='table'||e.type==='details'||e.type==='completion').map((e,i)=>e.type==='details'?<details className="output-details" key={JSON.stringify([e.runId,e.payload.id])}><summary>{e.time&&`[${e.time}] `}{e.payload.title}</summary><pre>{e.payload.text}</pre></details>:<div className={`log-line ${e.payload?.level||''}`} key={e.sequence ?? i}><time>{e.time?`[${e.time}]`:''}</time>{e.type==='completion'?<span className={`completion ${e.payload.status}`}>{nativeMessage(locale,e.payload.message)}</span>:e.type==='table'?<OutputTable value={e.payload} onOpen={openTarget}/>:e.type==='output'?<pre>{JSON.stringify(e.payload,null,2)}</pre>:<span>{e.payload.message}</span>}</div>)}<div ref={logEnd}/></div></div>}</section></SplitWorkspace>
+        :tab==='settings'?<form className="settings-content" onSubmit={e=>{e.preventDefault();saveSettings();}}><FieldForm key={JSON.stringify([selected,tool.manifest.version,settingsReset])} fields={tool.manifest.settings} values={toolSettings} onChange={setToolSettings} disabled={formDisabled}/>{Object.keys(tool.manifest.settings).length?<div className="settings-actions"><button type="button" className="secondary" disabled={formDisabled} title={tr("Restore defaults; save to apply")} onClick={()=>{setToolSettings(defaults(tool.manifest.settings));setSettingsReset(value=>value+1);}}><ArrowClockwiseIcon size={16}/>{tr("Reset")}</button><button className="primary compact" disabled={formDisabled}>{tr("Save settings")}</button></div>:<div className="quiet-empty">{tr("No settings")}</div>}</form>
         :tab==='dependencies'?<EnvironmentPanel key={selected} tool={tool}/>:<section className="documents">{tool.manifest.docs.length?<><div className="document-picker"><BookOpenIcon size={19}/><select aria-label={tr("Select document")} value={documentId} onChange={e=>setDocumentId(e.target.value)}>{tool.manifest.docs.map(d=><option key={d.id} value={d.id}>{d.title}</option>)}</select></div><article className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm, remarkExplicitLinks]} components={{a:({href,children})=><a href={href} onClick={e=>{e.preventDefault();if(href)openTarget(href.startsWith('http')?href:`${tool.directory}/${href}`);}}>{children}</a>}}>{markdown}</ReactMarkdown></article></>:<div className="quiet-empty">{tr("No documentation")}</div>}</section>}
       </>}
     </main>

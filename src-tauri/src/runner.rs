@@ -81,6 +81,8 @@ pub async fn job(app: &EventSink, config: &Config, id: &str, run: &str, operatio
     job_with_form(app, config, id, run, operation, action_id, params, json!({}), flag).await
 }
 pub async fn job_with_form(app: &EventSink, config: &Config, id: &str, run: &str, operation: &str, action_id: Option<&str>, params: Value, overrides: Value, flag: Arc<AtomicBool>) -> Result<String> {
+    // Deleting logs must not create a new log for the deletion itself.
+    if operation == "delete" { return job_inner(app, config, id, run, operation, action_id, params, overrides, flag).await; }
     let log = Arc::new(crate::run_logs::RunLog::new(config)?);
     log.record(run, "started", &json!({"toolId":id,"operation":operation,"actionId":action_id}));
     let downstream = app.clone();
@@ -104,8 +106,9 @@ impl Drop for RunTemp {
 async fn job_inner(app: &EventSink, config: &Config, id: &str, run: &str, operation: &str, action_id: Option<&str>, params: Value, overrides: Value, flag: Arc<AtomicBool>) -> Result<String> {
     let dir = storage::tool_dir(config, id)?;
     if operation == "delete" {
+        let options = if params.is_null() { storage::DeleteOptions::default() } else { serde_json::from_value(params).map_err(error)? };
         let config = config.clone(); let id = id.to_owned();
-        tauri::async_runtime::spawn_blocking(move || storage::delete(&config, &id)).await.map_err(error)??;
+        tauri::async_runtime::spawn_blocking(move || storage::delete(&config, &id, options)).await.map_err(error)??;
         return Ok("Deleted".into());
     }
     let m = read_manifest_for(&dir, &config.locale)?;
@@ -199,8 +202,6 @@ async fn job_inner(app: &EventSink, config: &Config, id: &str, run: &str, operat
         let host = host_dir.join(name); std::fs::write(&host, source).map_err(error)?;
         cmd.arg(host).arg(&entry).arg(port.to_string()).env("PYTHONUTF8", "1").env("PYTHONUNBUFFERED", "1");
         let app = app.clone(); let run = run.to_owned();
-        let is_hook = event.is_some();
-        let hooks = m.hooks.clone();
         ipc = Some(tokio::spawn(async move {
             let (mut socket,_) = tokio::time::timeout(Duration::from_secs(15), listener.accept()).await.map_err(error)?.map_err(error)?;
             socket.write_all(format!("{}\n", context).as_bytes()).await.map_err(error)?;
@@ -218,9 +219,9 @@ async fn job_inner(app: &EventSink, config: &Config, id: &str, run: &str, operat
                         return Err(message);
                     }
                 }
-                if kind == "clearOutput" && !is_hook && !event["payload"]["hookId"].as_str().is_some_and(|id| hooks.contains_key(id)) {
-                    writer.write_all(b"error: Unknown output hook\n").await.map_err(error)?;
-                    return Err("Unknown output hook".into());
+                if kind == "clearOutput" && !event["payload"].is_null() {
+                    writer.write_all(b"error: clearOutput takes no arguments\n").await.map_err(error)?;
+                    return Err("clearOutput takes no arguments".into());
                 }
                 emit(&app, &run, kind, event["payload"].clone());
                 writer.write_all(b"ok\n").await.map_err(error)?;

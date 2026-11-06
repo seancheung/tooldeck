@@ -33,6 +33,13 @@ settings:
       component: checkbox
 
 actions:
+  greetOnOpen:
+    name: Greeting on open
+    description: Select this action to receive a greeting from its actionOpen hook without clicking Run.
+    entry: greet-on-open.mjs
+    execution:
+      timeoutSeconds: 30
+
   table:
     name: Show table
     entry: table.mjs
@@ -102,6 +109,9 @@ actions:
         availableWhen: { op: notNull, key: folder }
 
 hooks:
+  onReset:
+    event: actionReset
+    entry: lifecycle.mjs
   onOpen:
     event: actionOpen
     entry: lifecycle.mjs

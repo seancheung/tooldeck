@@ -61,7 +61,7 @@ def run():
 
         context["paths"] = SimpleNamespace(**context["paths"])
         event = context.pop("hookEvent", None)
-        ctx = SimpleNamespace(**context, log=log, output=lambda value: emit("output", value), progress=progress, link=link, table=table, details=details)
+        ctx = SimpleNamespace(**context, log=log, json=lambda value: emit("output", value), progress=progress, link=link, table=table, details=details)
         entry = Path(sys.argv[1]).resolve()
         sys.path.insert(0, str(entry.parent))
         sys.dont_write_bytecode = True
@@ -69,7 +69,7 @@ def run():
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         if event is None:
-            ctx.clearOutput = lambda hook_id: emit("clearOutput", {"hookId": hook_id})
+            ctx.clearOutput = lambda: emit("clearOutput", None)
             ctx.updateParams = lambda patch: emit("updateParams", patch)
             result = module.main(ctx)
         else:

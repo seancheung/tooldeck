@@ -27,6 +27,56 @@ fn fixture(name: &str) -> (Config, String) {
 }
 fn flag() -> Arc<AtomicBool> { Arc::new(AtomicBool::new(false)) }
 
+#[test]
+fn delete_preserves_settings_only_when_selected_for_retention() {
+    for keep in [false, true] {
+        let (config,id)=fixture("node-example");
+        let dir=storage::tool_dir(&config,&id).unwrap();
+        fs::create_dir_all(dir.join(".tooldeck")).unwrap();
+        fs::write(dir.join(".tooldeck/settings.json"),r#"{"prefix":"Saved","uppercase":true}"#).unwrap();
+        storage::delete(&config,&id,storage::DeleteOptions{settings:!keep,data:true,logs:true}).unwrap();
+        let archive=Path::new(&config.data_dir).join("tool.zip");
+        let preview=storage::import_zip(&config,archive.to_str().unwrap()).unwrap();
+        storage::import_zip_confirmed(&config,archive.to_str().unwrap(),Some(&preview)).unwrap();
+        let settings=storage::list(&config).unwrap().remove(0).settings;
+        assert_eq!(settings["prefix"],if keep {"Saved"} else {"Hello"});
+        // A later deletion with default options also removes any retained copy.
+        storage::delete(&config,&id,storage::DeleteOptions::default()).unwrap();
+        assert!(!Path::new(&config.data_dir).join("retained-settings").join(format!("{id}.json")).exists());
+        fs::remove_dir_all(&config.data_dir).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn delete_tool_respects_data_and_log_choices() {
+    for data in [false, true] {
+        for logs in [false, true] {
+            let (config, id) = fixture("node-example");
+            let root = Path::new(&config.data_dir);
+            let data_path = root.join("data").join(&id);
+            fs::create_dir_all(&data_path).unwrap();
+            fs::write(data_path.join("session.json"), "history").unwrap();
+            let other_data = root.join("data/other");
+            fs::create_dir_all(&other_data).unwrap();
+            fs::write(other_data.join("keep.txt"), "keep").unwrap();
+            for owner in [&id, "other"] {
+                let log = crate::run_logs::RunLog::new(&config).unwrap();
+                log.record("run", "started", &json!({"toolId":owner}));
+                log.finish().unwrap();
+            }
+            let app: runner::EventSink = Arc::new(|_,_,_|{});
+            runner::job(&app,&config,&id,"delete","delete",None,json!({"data":data,"logs":logs}),flag()).await.unwrap();
+            assert!(!storage::tool_dir(&config,&id).unwrap().exists());
+            assert_eq!(data_path.exists(), !data);
+            assert!(other_data.join("keep.txt").exists());
+            assert_eq!(fs::read_dir(root.join("logs")).unwrap().count(), if logs {1} else {2});
+            let remaining = crate::run_logs::clear_tool(&config,"other").unwrap();
+            assert_eq!(remaining,1);
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+}
+
 #[tokio::test]
 async fn node_import_install_run_uninstall() {
     
@@ -45,7 +95,7 @@ async fn node_import_install_run_uninstall() {
     fs::write(dir.join("preview.mjs"),format!("import value from 'tooldeck-test-package';\nif(value !== 'dependency loaded') throw new Error('dependency missing');\n{original}")).unwrap();
     runner::job(&app,&config,&id,"install-node","install",None,json!({}),flag()).await.unwrap();
     assert!(storage::list(&config).unwrap()[0].installed);
-    for (hook, event) in [("onOpen","actionOpen"),("onClose","actionClose")] {
+    for (hook, event) in [("onOpen","actionOpen"),("onClose","actionClose"),("onReset","actionReset")] {
         runner::job(&app,&config,&id,event,"hook",Some("write"),lifecycle(hook,event),flag()).await.unwrap();
         assert!(events.lock().unwrap().iter().any(|e| e["runId"] == event && e["payload"]["message"] == format!("{event}: write")));
     }

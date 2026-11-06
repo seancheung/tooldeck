@@ -25,7 +25,7 @@ Leave the Node.js and uv paths blank for automatic detection. If detection fails
 | --- | --- |
 | Import a higher version with the same ID | Review and confirm the upgrade. Settings and persistent data are retained. Changes to the runtime or dependencies can require installation again. The same or a lower version is rejected. |
 | Uninstall | Removes the installed environment. Scripts, settings and persistent data remain available for a later installation. |
-| Delete | Removes the tool from the library along with its scripts, environment and tool settings. Its separate persistent data directory and run logs remain. |
+| Delete | Removes the tool, its scripts and environment. **Tool settings** is selected for deletion by default; uncheck it to restore those settings on a later import. Optionally select **Run data** (sessions, history and caches) and **Run logs for this tool** to delete them too. Unchecked items are retained; files saved to user-selected locations are unaffected. |
 
 ## Find outputs and logs
 

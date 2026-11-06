@@ -13,7 +13,7 @@ def main(ctx):
             stream.write(message + "\n")
     except FileExistsError as error:
         raise FileExistsError(text(ctx.locale, "The destination file already exists.")) from error
-    ctx.output({"message": message, "savedTo": str(destination)})
+    ctx.json({"message": message, "savedTo": str(destination)})
     ctx.link({"kind": "file", "target": str(destination), "label": text(ctx.locale, "Open greeting file")})
     ctx.link({"kind": "directory", "target": str(destination.parent), "label": text(ctx.locale, "Open containing directory")})
     ctx.progress({"value": 1, "total": 1, "message": text(ctx.locale, "Done")})
