@@ -1,6 +1,11 @@
+import InputPassword from './components/ui/input-password';
+import InputNumber from './components/ui/input-number';
+import Tooltip from './components/ui/tooltip';
+import Checkbox from './components/ui/checkbox';
+import { Button, Input, Textarea, FormSelect } from './components/controls';
 import { equal } from './paramForm';
 import { useTranslator } from './i18n';
-import { FolderOpenIcon, EyeIcon, EyeSlashIcon, XIcon } from '@phosphor-icons/react';
+import { FolderOpenIcon, XIcon } from '@phosphor-icons/react';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { useRef, useState } from 'react';
 import type { Condition, Field, Json } from './types';
@@ -41,14 +46,16 @@ export function FieldForm({ fields = {}, values, onChange, onCommit, disabled = 
 }
 function FieldInput({ name, field, value, set, commit, disabled }: { name: string; field: Field; value: Json|undefined; set: (v: Json|undefined) => void; commit: (v: Json|undefined) => void; disabled: boolean }) {
   const tr = useTranslator();
-  const [visible, setVisible] = useState(false);
   const [raw, setRaw] = useState<string>();
   const [error, setError] = useState('');
   const schema = field.schema;
   const component = field.ui?.component || (schema.enum ? 'select' : schema.type === 'boolean' ? 'checkbox' : ['number', 'integer'].includes(schema.type) ? 'number' : ['array', 'object'].includes(schema.type) ? 'json' : 'text');
+  const pathPicker = component === 'file' || component === 'directory';
   const multiple = component === 'file' && field.ui?.multiple === true;
   const label = field.ui?.label || name;
   const id = `field-${name}`;
+  const description = field.ui?.description?.trim();
+  const descriptionId = description ? `description-${id}` : undefined;
   const committed = useRef(value);
   function commitValue(next: Json | undefined) {
     if (equal(committed.current, next)) return;
@@ -75,14 +82,43 @@ function FieldInput({ name, field, value, set, commit, disabled }: { name: strin
       }
     } catch (e) { setError(String(e)); }
   }
+  const textProps = {
+    id, 'aria-describedby': descriptionId, placeholder: field.ui?.placeholder, required: field.required,
+    minLength: schema.minLength, maxLength: schema.maxLength, value: value === undefined ? '' : String(value),
+    disabled, readOnly: pathPicker, autoComplete: 'off', onBlur: () => commitValue(value),
+  };
+  const fieldLabel = <>{label}{field.required && <span className="required"> *</span>}</>;
   return <div className="field">
-    <label htmlFor={id} title={field.ui?.description}>{label}{field.required && <span className="required"> *</span>}</label>
-    {component === 'checkbox' ? <label className="switch-row"><input id={id} type="checkbox" checked={value === true} disabled={disabled} onChange={e => choose(e.target.checked)} /><span>{value === true ? tr("Enabled") : tr("Disabled")}</span></label>
-      : component === 'select' ? <select id={id} required={field.required} disabled={disabled} value={value === undefined ? '' : String((schema.enum || []).findIndex((option: Json) => equal(option, value)))} onChange={e => choose(e.target.value === '' ? undefined : schema.enum?.[Number(e.target.value)])}><option value="" disabled={field.required}>{field.ui?.placeholder || tr("Select…")}</option>{(schema.enum || []).map((option: Json, index: number) => <option key={index} value={index}>{field.ui?.options?.find(item => equal(item.value, option))?.label ?? String(option)}</option>)}</select>
-      : multiple ? <div className="file-selection"><button id={id} type="button" className="secondary" disabled={disabled} onClick={browse}><FolderOpenIcon size={18}/>{tr("Choose files")}</button><span className="hint">{tr("{count} files selected", {count:Array.isArray(value) ? value.length : 0})}</span>{Array.isArray(value) && value.map((path, index) => <div className="selected-file" key={String(path)}><span title={String(path)}>{String(path)}</span><button type="button" className="file-remove" title={tr("Remove file")} aria-label={tr("Remove {name}", {name:String(path)})} disabled={disabled} onClick={() => choose(value.filter((_, i) => i !== index))}><XIcon size={16} aria-hidden="true"/></button></div>)}</div>
-      : component === 'number' ? <input id={id} onBlur={() => commitValue(value)} placeholder={field.ui?.placeholder} type="number" required={field.required} value={value === undefined ? '' : String(value)} min={schema.minimum} max={schema.maximum} step={schema.type === 'integer' ? 1 : 'any'} disabled={disabled} onChange={e => set(e.target.value === '' ? undefined : Number(e.target.value))} />
-      : ['textarea', 'json', 'tags'].includes(component) || schema.type === 'object' || schema.type === 'array' ? <textarea onBlur={e => { if (e.target.validity.valid) commitValue(value); }} id={id} placeholder={field.ui?.placeholder} disabled={disabled} rows={4} value={raw ?? (typeof value === 'string' ? value : value === undefined ? '' : JSON.stringify(value, null, 2))} onChange={e => { const text = e.target.value; setRaw(text); if (schema.type === 'string') set(text); else { try { set(JSON.parse(text)); setError(''); e.target.setCustomValidity(''); } catch { setError(tr("Enter valid JSON")); e.target.setCustomValidity(tr("Enter valid JSON")); } } }} />
-      : <div className="input-group"><input onBlur={() => commitValue(value)} id={id} placeholder={field.ui?.placeholder} type={field.secret && !visible ? 'password' : 'text'} required={field.required} minLength={schema.minLength} maxLength={schema.maxLength} value={value === undefined ? '' : String(value)} disabled={disabled} onChange={e => set(e.target.value === '' && !field.required && ['file','directory'].includes(component) ? undefined : e.target.value)} autoComplete="off" />{['file','directory'].includes(component) && <button title={tr("Choose {name}", {name:label})} type="button" onClick={browse} disabled={disabled}><FolderOpenIcon size={21} /></button>}{field.secret && <button title={tr("Show or hide")} type="button" onClick={() => setVisible(!visible)}>{visible ? <EyeSlashIcon /> : <EyeIcon />}</button>}</div>}
+    {component !== 'checkbox' && <label htmlFor={id}>{fieldLabel}</label>}
+    {component === 'checkbox' ? <Checkbox id={id} aria-describedby={descriptionId} value={value === true} disabled={disabled} onChange={choose} label={fieldLabel}/>
+      : component === 'select' ? <FormSelect id={id} aria-describedby={descriptionId} required={field.required} disabled={disabled} value={value === undefined ? '' : String((schema.enum || []).findIndex((option: Json) => equal(option, value)))} onChange={index => choose(index === '' ? undefined : schema.enum?.[Number(index)])} placeholder={field.ui?.placeholder || tr("Select…")} options={(schema.enum || []).map((option: Json, index: number) => ({value:String(index),label:field.ui?.options?.find(item => equal(item.value, option))?.label ?? String(option)}))}/>
+      : multiple ? <div className="file-selection">
+          <div className="input-group w-full">
+            <Input id={id} aria-describedby={descriptionId} readOnly disabled={disabled}
+              placeholder={tr("No files selected")}
+              value={Array.isArray(value) && value.length > 0 ? tr("{count} files selected", {count: value.length}) : ''}/>
+            <Tooltip content={tr("Choose files")}>
+              <Button type="button" variant="secondary" shape="square" aria-label={tr("Choose files")} disabled={disabled} onClick={browse}>
+                <FolderOpenIcon size={21} aria-hidden="true"/>
+              </Button>
+            </Tooltip>
+          </div>
+        </div>
+      : component === 'number' ? <InputNumber
+          id={id} aria-describedby={descriptionId} className="w-full" placeholder={field.ui?.placeholder} required={field.required}
+          value={typeof value === 'number' ? value : null} integer={schema.type === 'integer'}
+          min={schema.minimum} max={schema.maximum} disabled={disabled}
+          clearable onClear={() => choose(undefined)} onChange={choose}
+        />
+      : ['textarea', 'json', 'tags'].includes(component) || schema.type === 'object' || schema.type === 'array' ? <Textarea error={!!error} aria-invalid={!!error} onBlur={e => { if (e.target.validity.valid) commitValue(value); }} id={id} aria-describedby={descriptionId} placeholder={field.ui?.placeholder} disabled={disabled} rows={4} value={raw ?? (typeof value === 'string' ? value : value === undefined ? '' : JSON.stringify(value, null, 2))} onChange={e => { const text = e.target.value; setRaw(text); if (schema.type === 'string') set(text); else { try { set(JSON.parse(text)); setError(''); e.target.setCustomValidity(''); } catch { setError(tr("Enter valid JSON")); e.target.setCustomValidity(tr("Enter valid JSON")); } } }} />
+      : <div className="input-group">{field.secret ? <InputPassword {...textProps} visibilityLabel={tr("Show or hide")} onChange={set}/>
+          : <Input {...textProps} onChange={e => set(e.target.value)}/>}{pathPicker && !field.required && !!value && <Button type="button" variant="secondary" shape="square" disabled={disabled} aria-label={tr("Clear")} onClick={()=>choose(undefined)}><XIcon size={16}/></Button>}{pathPicker && <Tooltip content={tr("Choose {name}", {name:label})}><Button variant="secondary" shape="square" aria-label={tr("Choose {name}", {name:label})} type="button" onClick={browse} disabled={disabled}><FolderOpenIcon size={21} /></Button></Tooltip>}</div>}
+    {description && <p id={descriptionId} className="hint">{description}</p>}
+    {multiple && Array.isArray(value) && value.length > 0 && (
+      <div className="file-selection mt-2">
+        {value.map((path, index) => <div className="selected-file" key={String(path)}><Tooltip content={String(path)} className="break-all"><span tabIndex={0}>{String(path)}</span></Tooltip><Tooltip content={tr("Remove file")}><Button type="button" className="file-remove" aria-label={tr("Remove {name}", {name:String(path)})} disabled={disabled} onClick={() => choose(value.filter((_, i) => i !== index))}><XIcon size={16} aria-hidden="true"/></Button></Tooltip></div>)}
+      </div>
+    )}
     {error && <p className="error-text">{error}</p>}
   </div>;
 }

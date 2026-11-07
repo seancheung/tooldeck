@@ -4,6 +4,7 @@ import { isTauri } from '@tauri-apps/api/core';
 import { translate } from './i18n';
 import App from './App';
 import './styles.css';
+document.documentElement.dataset.theme = 'dark';
 document.addEventListener('contextmenu', event => event.preventDefault());
 const root = ReactDOM.createRoot(document.getElementById('root')!);
 if (isTauri()) {

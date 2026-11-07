@@ -1,19 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import path from 'node:path';
 import { createRequire } from 'node:module';
 import ts from 'typescript';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 const require = createRequire(import.meta.url);
-function loadComponent(path, imports = {}) {
-  const code = ts.transpileModule(fs.readFileSync(path, 'utf8'), {
+function loadComponent(filename, imports = {}) {
+  const code = ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, esModuleInterop: true, jsx: ts.JsxEmit.ReactJSX }
   }).outputText;
   const compiled = { exports: {} };
-  new Function('require', 'module', 'exports', code)(name =>
-    Object.hasOwn(imports, name) ? imports[name] : require(name), compiled, compiled.exports);
+  new Function('require', 'module', 'exports', code)(name => {
+    if (Object.hasOwn(imports, name)) return imports[name];
+    if (name.startsWith('.') || name.startsWith('@/')) {
+      const base = name.startsWith('@/') ? path.resolve('src', name.slice(2)) : path.resolve(path.dirname(filename), name);
+      const local = ['.tsx', '.ts'].map(ext => base + ext).find(file => fs.existsSync(file));
+      if (local) return loadComponent(local);
+    }
+    return require(name);
+  }, compiled, compiled.exports);
   return compiled.exports;
 }
 const uiChinese = JSON.parse(fs.readFileSync('src/locales/ui.zh-CN.json', 'utf8'));
@@ -22,13 +30,14 @@ const { FieldForm } = loadComponent('src/FieldForm.tsx', {
   './paramForm': loadComponent('src/paramForm.ts'), './i18n': i18n, '@tauri-apps/plugin-dialog': {}, '@phosphor-icons/react': {}
 });
 
-test('field controls use the app language and preserve manifest strings', () => {
+test('checkboxes use the manifest field name as their only label in either language', () => {
   for (const [locale, enabled] of [['en', 'Enabled'], ['zh-CN', uiChinese.Enabled]]) {
     const html = renderToStaticMarkup(React.createElement(i18n.LocaleContext.Provider, { value: locale },
       React.createElement(FieldForm, { fields: { flag: { schema: {type:'boolean'}, ui: {label:'Custom field'} } },
         values: {flag:true}, onChange() {} })));
-    assert.ok(html.includes(enabled));
-    assert.ok(html.includes('Custom field'));
+    assert.ok(!html.includes(enabled));
+    assert.equal(html.match(/<label\b/g)?.length, 1);
+    assert.match(html, /<input[^>]*type="checkbox"[^>]*>[\s\S]*Custom field[\s\S]*<\/label>/);
   }
 });
 

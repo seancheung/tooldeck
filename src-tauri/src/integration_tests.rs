@@ -6,7 +6,7 @@ use std::{fs, io::Write, path::{Path, PathBuf}, sync::{Arc, Mutex, atomic::{Atom
 fn fixture(name: &str) -> (Config, String) {
     let root = std::env::temp_dir().join(format!("tooldeck-integration-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&root).unwrap();
-    let config = Config { locale: "en".into(), data_dir: root.to_string_lossy().into(), node_path: which::which("node").unwrap().to_string_lossy().into(), uv_path: std::env::var("TOOLDECK_TEST_UV").unwrap_or_default() };
+    let config = Config { show_output_timestamps: true, locale: "en".into(), data_dir: root.to_string_lossy().into(), node_path: which::which("node").unwrap().to_string_lossy().into(), uv_path: std::env::var("TOOLDECK_TEST_UV").unwrap_or_default() };
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples").join(name);
     let archive = root.join("tool.zip");
     let mut zip = zip::ZipWriter::new(fs::File::create(&archive).unwrap());

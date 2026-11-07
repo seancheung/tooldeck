@@ -1,0 +1,86 @@
+"use client";
+
+import { cva, type VariantProps } from "class-variance-authority";
+import { EyeIcon, EyeOffIcon } from "lucide-react";
+import Tooltip from "./tooltip";
+import { useState } from "react";
+
+const variants = cva(
+  "has-icon inline-flex min-w-50 items-center justify-center gap-1.5 rounded-md border bg-base-100 icon:text-content-400 text-content-100 transition-all",
+  {
+    variants: {
+      size: {
+        sm: "h-6 px-2 text-xs",
+        md: "h-8 px-3 text-sm",
+        lg: "h-9 px-3.5 text-base",
+      },
+      error: {
+        true: "border-error focus-within:ring-3 focus-within:ring-error/10",
+        false:
+          "border-base-400 focus-within:border-primary-500 focus-within:ring-3 focus-within:ring-ring/10",
+      },
+      disabled: {
+        true: "opacity-40",
+        false: "",
+      },
+    },
+    defaultVariants: {
+      size: "md",
+      error: false,
+      disabled: false,
+    },
+  },
+);
+
+export type InputPasswordProps = Omit<
+  React.ComponentProps<"input">,
+  "type" | "value" | "defaultValue" | "onChange" | "size"
+> &
+  VariantProps<typeof variants> & {
+    value?: string | null;
+    defaultValue?: string;
+    icon?: React.ReactNode;
+    visibilityLabel?: string;
+    onChange?: (value: string) => void;
+  };
+
+export default function InputPassword({
+  error,
+  icon,
+  visibilityLabel,
+  className,
+  size,
+  disabled,
+  value,
+  defaultValue,
+  onChange,
+  ...props
+}: InputPasswordProps) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div className={variants({ className, size, error, disabled })}>
+      {icon}
+      <input
+        {...props}
+        type={visible ? "text" : "password"}
+        disabled={disabled}
+        className="w-0 flex-1 border-none bg-transparent outline-none"
+        value={value === null ? "" : value}
+        defaultValue={defaultValue}
+        onChange={(e) => onChange?.(e.target.value)}
+      />
+      <Tooltip content={visibilityLabel}>
+      <button
+        type="button"
+        disabled={disabled ?? false}
+        onClick={() => setVisible((v) => !v)}
+        aria-label={visibilityLabel ?? (visible ? "Hide password" : "Show password")}
+        aria-pressed={visible}
+        className="has-icon -mr-1 inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm text-content-400 transition-colors not-disabled:hover:text-content-200"
+      >
+        {visible ? <EyeOffIcon /> : <EyeIcon />}
+      </button>
+      </Tooltip>
+    </div>
+  );
+}

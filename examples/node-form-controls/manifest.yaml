@@ -1,0 +1,68 @@
+manifestVersion: 1
+id: org.tooldeck.node-form-controls
+name: 表单控件示例
+version: "1.0.0"
+description: 在同一个操作中体验所有表单控件，运行后查看传入的参数。
+hostApi: "^1.0.0"
+runtime:
+  kind: nodejs
+  version: ">=22.0.0"
+  source: system
+
+actions:
+  preview:
+    name: 预览表单参数
+    entry: preview.mjs
+    params:
+      title:
+        schema: {type: string, default: 示例任务}
+        ui: {component: text, label: 标题}
+      notes:
+        schema: {type: string}
+        ui: {component: textarea, label: 备注, placeholder: 可输入多行文字}
+      count:
+        schema: {type: integer, minimum: 1, maximum: 10, default: 3}
+        ui: {component: number, label: 数量, description: 取值范围为 1 到 10。}
+      ratio:
+        schema: {type: number, minimum: 0, maximum: 1, default: 0.75}
+        ui: {component: number, label: 比例}
+      enabled:
+        schema: {type: boolean, default: true}
+        ui: {component: checkbox, label: 启用详细输出}
+      mode:
+        schema: {type: string, enum: [quick, full], default: quick}
+        ui:
+          component: select
+          label: 处理模式
+          options:
+            - {value: quick, label: 快速}
+            - {value: full, label: 完整}
+      tags:
+        schema: {type: array, items: {type: string}, default: [示例]}
+        ui: {component: tags, label: 标签, description: 输入 JSON 字符串数组。}
+      metadata:
+        schema: {type: object, default: {language: zh-CN}}
+        ui: {label: 附加属性, description: 输入 JSON 对象。}
+      values:
+        schema: {type: array, items: {type: number}, default: [1, 2]}
+        ui: {label: 数值列表, description: 输入 JSON 数组。}
+      password:
+        secret: true
+        schema: {type: string}
+        ui: {component: password, label: 测试密钥, description: 请使用示例值。预览只显示是否已填写。}
+      inputFile:
+        schema: {type: string}
+        ui: {component: file, mode: open, label: 输入文件}
+        path: {kind: file, mustExist: true}
+      inputFiles:
+        schema: {type: array, items: {type: string}, uniqueItems: true}
+        ui: {component: file, mode: open, multiple: true, label: 多个输入文件}
+        path: {kind: file, mustExist: true}
+      outputFile:
+        schema: {type: string}
+        ui: {component: file, mode: save, label: 输出文件, description: 仅预览路径，不会写入文件。}
+        path: {kind: file, mustExist: false}
+      directory:
+        schema: {type: string}
+        ui: {component: directory, label: 工作目录}
+        path: {kind: directory, mustExist: true}

@@ -64,7 +64,7 @@ mod tests {
     #[test]
     fn persists_and_clears_only_host_logs() {
         let root = std::env::temp_dir().join(format!("tooldeck-logs-test-{}", uuid::Uuid::new_v4()));
-        let config = Config { locale: "en".into(), data_dir: root.to_string_lossy().into(), node_path: String::new(), uv_path: String::new() };
+        let config = Config { show_output_timestamps: true, locale: "en".into(), data_dir: root.to_string_lossy().into(), node_path: String::new(), uv_path: String::new() };
         let log = RunLog::new(&config).unwrap();
         log.record("run", "finished", &json!({"status":"cancelled"}));
         log.finish().unwrap(); drop(log);
