@@ -18,7 +18,7 @@ export function useConfirmation() {
     setRequest({ message, ...options });
     return new Promise<boolean>(done => { resolve.current = done; });
   }
-  const confirmationDialog = request && <Dialog open title={request.title} description={request.message}
+  const confirmationDialog = request && <Dialog className="dialog-controls" open title={request.title} description={request.message}
     closeLabel={request.cancelLabel} onOpenChange={open => { if (!open) finish(false); }}
     footer={<><Button variant="secondary" autoFocus onClick={() => finish(false)}>{request.cancelLabel}</Button>
       <Button variant="danger" onClick={() => finish(true)}>{request.okLabel}</Button></>}/>;

@@ -137,7 +137,7 @@ pub fn run() {
             window_state::setup(app)?;
             let config_file = app.path().app_config_dir()?.join("config.json");
             let config = if config_file.exists() { serde_json::from_slice(&std::fs::read(&config_file)?)? } else {
-                Config { show_output_timestamps: true, locale: locale::system_locale(), data_dir: app.path().app_data_dir()?.to_string_lossy().into(), node_path: String::new(), uv_path: String::new() }
+                Config { show_output_timestamps: false, locale: locale::system_locale(), data_dir: app.path().app_data_dir()?.to_string_lossy().into(), node_path: String::new(), uv_path: String::new() }
             };
             app.manage(AppState { config_file, config: Mutex::new(config), jobs: Mutex::new(HashMap::new()) });
             Ok(())

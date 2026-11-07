@@ -5,13 +5,12 @@ use std::{collections::HashSet, fs, path::{Path, PathBuf}};
 pub type Result<T> = std::result::Result<T, String>;
 pub fn error(e: impl std::fmt::Display) -> String { e.to_string() }
 
-fn default_show_output_timestamps() -> bool { true }
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Config {
     pub data_dir: String,
-    #[serde(default = "default_show_output_timestamps")] pub show_output_timestamps: bool,
+    #[serde(default)] pub show_output_timestamps: bool,
     #[serde(default = "crate::locale::system_locale")] pub locale: String,
     #[serde(default)] pub node_path: String,
     #[serde(default)] pub uv_path: String,

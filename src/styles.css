@@ -11,7 +11,8 @@ h1 { font-size: 22px; font-weight: 600; line-height: 1.35; letter-spacing: -.02e
 h2 { font-size: 14px; font-weight: 600; }
 h3 { font-size: 13px; font-weight: 600; }
 .app-shell { display: flex; height: 100dvh; overflow: hidden; }
-.sidebar { position: relative; width: 250px; flex-shrink: 0; padding: 24px 8px 12px; display: flex; flex-direction: column; border-right: 1px solid var(--line); background: var(--color-base-100); }
+.sidebar { position: relative; width: 250px; flex-shrink: 0; padding: 24px 8px 12px; display: flex; flex-direction: column; border-right: 1px solid var(--line); background: var(--color-base-100); -webkit-user-select: none; user-select: none; }
+.sidebar input { -webkit-user-select: text; user-select: text; }
 .brand { display: flex; align-items: center; gap: 9px; padding: 0 8px; margin-bottom: 28px; }
 .brand > svg { width: 27px; height: 27px; color: var(--accent); }
 .brand > span { font-size: 20px; font-weight: 650; letter-spacing: -.6px; }
@@ -26,8 +27,6 @@ h3 { font-size: 13px; font-weight: 600; }
 .tool-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .tool-row.incompatible { color: var(--color-content-300); }
 .tool-status { display: inline-flex; }
-.tool-status.success { color: var(--color-success); }
-.tool-status.error, .tool-status.unsupported { color: var(--danger); }
 .tool-status.running { color: var(--color-info); }
 .runtime-icon { display: inline-flex; width: 17px; height: 17px; flex-shrink: 0; }
 .runtime-icon img { width: 100%; height: 100%; object-fit: contain; }
@@ -47,7 +46,7 @@ h3 { font-size: 13px; font-weight: 600; }
 .sidebar-drop-hint { position: absolute; inset: 8px; z-index: 5; display: grid; place-items: center; padding: 12px; background: var(--color-base-200); border: 2px dashed var(--accent); border-radius: 8px; color: var(--accent); text-align: center; pointer-events: none; }
 .list-empty { padding: 12px 10px; font-size: 11px; color: var(--color-content-300); }
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 28px 28px 20px; container: tool-panel / inline-size; }
-.tool-header { display: flex; align-items: flex-start; gap: 24px; margin-bottom: 25px; flex-shrink: 0; }
+.tool-header { display: flex; align-items: flex-start; gap: 24px; margin-bottom: 25px; flex-shrink: 0; -webkit-user-select: none; user-select: none; }
 .tool-heading { display: flex; align-items: flex-start; gap: 14px; flex: 1; min-width: 0; }
 .tool-title-content { min-width: 0; }
 .tool-title-content h1 { overflow-wrap: anywhere; }
@@ -56,10 +55,11 @@ h3 { font-size: 13px; font-weight: 600; }
 .header-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; padding-top: 3px; }
 .icon-button { width: 32px; padding: 0; }
 .icon-button.favorited { color: var(--accent); }
-.tool-tabs { flex-shrink: 0; }
+.tool-tabs { flex-shrink: 0; -webkit-user-select: none; user-select: none; }
 .tool-tabs > button { padding: 12px 18px; }
 .workspace { display: grid; flex: 1; min-height: 0; padding-top: 20px; }
 .parameters { min-width: 0; min-height: 0; display: flex; flex-direction: column; padding: 4px 18px 0 0; }
+.parameters :is(label, .action-description, .hint, .run-footer) { -webkit-user-select: none; user-select: none; }
 .parameter-scroll { flex: 1; overflow: auto; scrollbar-gutter: stable; padding-right: 10px; }
 .workspace-divider { position: relative; cursor: col-resize; touch-action: none; user-select: none; }
 .workspace-divider::before { content: ''; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px; background: var(--line); }
@@ -115,6 +115,9 @@ h3 { font-size: 13px; font-weight: 600; }
 .settings-content, .dependencies-content, .documents { overflow: auto; flex: 1; min-height: 0; padding: 24px 0; }
 .settings-actions { display: flex; gap: 8px; }
 .document-picker { margin-bottom: 24px; }
+.dialog-controls { -webkit-user-select: none; user-select: none; }
+.dialog-controls :is(input, textarea) { -webkit-user-select: text; user-select: text; }
+.document-picker, .document-picker-menu, .dep-view dt, .dep-list h3, .dep-original button, .output-header h2 { -webkit-user-select: none; user-select: none; }
 .markdown { font-size: 13px; color: var(--muted); line-height: 1.85; overflow-wrap: anywhere; }
 .markdown h1, .markdown h2, .markdown h3 { margin: 24px 0 12px; color: var(--color-content-100); }
 .markdown h2 { font-size: 18px; }

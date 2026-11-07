@@ -8,8 +8,8 @@ import type { Tool } from './types';
 export type DeleteOptions = { settings: boolean; data: boolean; logs: boolean };
 export function DeleteToolDialog({tool, busy, close, submit}: {tool: Tool; busy: boolean; close: () => void; submit: (options: DeleteOptions) => void}) {
   const tr = useTranslator();
-  const [options, setOptions] = useState<DeleteOptions>({settings:true, data:false, logs:false});
-  return <Dialog closeLabel={tr("Cancel")} open onOpenChange={open => { if (!open && !busy) close(); }} closable={!busy} title={tr('Delete tool')} className="app-dialog" footer={<><Button variant="secondary" className="secondary" autoFocus disabled={busy} onClick={close}>{tr('Cancel')}</Button><Button variant="danger" className="secondary danger-button" disabled={busy} onClick={()=>submit(options)}>{busy?tr('Deleting…'):tr('Delete')}</Button></>}>
+  const [options, setOptions] = useState<DeleteOptions>({settings:false, data:false, logs:false});
+  return <Dialog closeLabel={tr("Cancel")} open onOpenChange={open => { if (!open && !busy) close(); }} closable={!busy} title={tr('Delete tool')} className="app-dialog dialog-controls" footer={<><Button variant="secondary" className="secondary" autoFocus disabled={busy} onClick={close}>{tr('Cancel')}</Button><Button variant="danger" className="secondary danger-button" disabled={busy} onClick={()=>submit(options)}>{busy?tr('Deleting…'):tr('Delete')}</Button></>}>
     <div className="dialog-body"><h3>{tool.manifest.name}</h3>
       <p>{tr('Tool files and installed dependencies will be deleted.')}</p>
       <p>{tr('Also delete the selected data. Unchecked items will be kept.')}</p>

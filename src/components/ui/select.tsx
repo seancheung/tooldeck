@@ -68,6 +68,7 @@ export type SelectProps<T = unknown> = Omit<
     onChange?: (value: T) => void;
     options: SelectOption<T>[];
     placeholder?: string;
+    menuClassName?: string;
     emptyMessage?: React.ReactNode;
     icon?: React.ReactNode;
     clearable?: boolean;
@@ -87,6 +88,7 @@ export default function Select<T = unknown>({
   disabled,
   size,
   className,
+  menuClassName,
   clearable,
   onClear,
   renderOption,
@@ -236,6 +238,7 @@ export default function Select<T = unknown>({
               style={floatingStyles}
               className={cn(
                 "z-50 outline-none",
+                menuClassName,
                 isAbove ? "origin-bottom" : "origin-top",
               )}
               {...getFloatingProps()}
