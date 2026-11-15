@@ -20,6 +20,26 @@ const {ParamSessions, actionScope, toolScope} = sessionsModule;
 const {latestToolRuns, clearActionRun, clearRunOutput} = load('src/runState.ts');
 const {stampOutputEvent, chronologicalOutput, appendOutputEvent} = load('src/outputEvents.ts');
 
+test('console refresh replaces only its open stream line and preserves ordinary logs', () => {
+  const line = (id, message, closed = false, runId = 'run') => stampOutputEvent({
+    runId, type: 'log', payload: {outputLineId: id, message, closed},
+  });
+  const first = line('stderr:0', '10%');
+  const normal = stampOutputEvent({runId:'run', type:'log', payload:{message:'normal log'}});
+  let events = [first, normal, line('stdout:0', 'output'), line('stderr:0', 'other run', false, 'other')];
+  events = appendOutputEvent(events, line('stderr:0', '100%', true));
+  assert.equal(events.length, 4);
+  assert.equal(events[0].payload.message, '100%');
+  assert.equal(events[0].sequence, first.sequence);
+  assert.equal(events[1], normal);
+  assert.equal(events[2].payload.message, 'output');
+  assert.equal(events[3].payload.message, 'other run');
+  events = appendOutputEvent(events, line('stderr:1', 'next line'));
+  assert.equal(events.length, 5);
+  assert.equal(events[0].payload.closed, true);
+  assert.equal(appendOutputEvent([], line('stderr:1', 'after clear')).length, 1);
+});
+
 test('manual reset hook receives defaults without old overrides and writes after output clearing',()=>{
   const host=hookHost(), calls=[], a=tool('a');
   a.manifest.hooks.reset={event:'actionReset'};

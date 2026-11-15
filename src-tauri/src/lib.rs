@@ -3,6 +3,7 @@ mod model;
 mod param_patch;
 mod storage;
 mod runner;
+mod console_output;
 mod window_state;
 mod run_logs;
 #[cfg(test)] mod integration_tests;

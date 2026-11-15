@@ -15,6 +15,15 @@ export function chronologicalOutput(events: Event[]): Event[] {
 }
 
 export function appendOutputEvent(events: Event[], event: Event): Event[] {
+  if (event.type === 'log' && typeof event.payload?.outputLineId === 'string') {
+    const index = events.findIndex(item => item.type === 'log' && item.runId === event.runId
+      && item.payload?.outputLineId === event.payload.outputLineId && item.payload.closed === false);
+    if (index >= 0) {
+      const next = events.slice();
+      next[index] = {...events[index], payload: event.payload};
+      return next;
+    }
+  }
   if (event.type === 'details') {
     if (typeof event.payload?.text !== 'string') return events;
     const index = events.findIndex(item => item.type === 'details' && item.runId === event.runId && item.payload.id === event.payload.id);

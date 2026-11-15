@@ -51,9 +51,9 @@ async fn process(mut cmd: Command, app: &EventSink, run: &str, flag: Arc<AtomicB
     let mut child = cmd.spawn().map_err(error)?;
     let stdout = child.stdout.take().unwrap(); let stderr = child.stderr.take().unwrap();
     let app1 = app.clone(); let run1 = run.to_owned();
-    let out = tokio::spawn(async move { let mut lines = BufReader::new(stdout).lines(); while let Ok(Some(line)) = lines.next_line().await { emit(&app1, &run1, "log", json!({"message":line,"level":"info"})); } });
+    let out = tokio::spawn(crate::console_output::read(stdout, app1, run1, "info"));
     let app2 = app.clone(); let run2 = run.to_owned();
-    let err = tokio::spawn(async move { let mut lines = BufReader::new(stderr).lines(); while let Ok(Some(line)) = lines.next_line().await { emit(&app2, &run2, "log", json!({"message":line,"level":"warning"})); } });
+    let err = tokio::spawn(crate::console_output::read(stderr, app2, run2, "warning"));
     let started = Instant::now();
     let status = loop {
         if flag.load(Ordering::SeqCst) { terminate(&mut child).await; break Err("Cancelled".into()); }

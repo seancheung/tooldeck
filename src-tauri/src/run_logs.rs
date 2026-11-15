@@ -12,6 +12,8 @@ impl RunLog {
         Ok(Self(Mutex::new((file, None))))
     }
     pub fn record(&self, run: &str, kind: &str, payload: &Value) {
+        // Persist the final line only, rather than every frame of a progress animation.
+        if kind == "log" && payload["outputLineId"].is_string() && payload["closed"] == false { return; }
         let mut state = self.0.lock().unwrap();
         let event = json!({"timestampMs": SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64,
             "runId": run, "type": kind, "payload": payload});
@@ -66,11 +68,18 @@ mod tests {
         let root = std::env::temp_dir().join(format!("tooldeck-logs-test-{}", uuid::Uuid::new_v4()));
         let config = Config { show_output_timestamps: true, locale: "en".into(), data_dir: root.to_string_lossy().into(), node_path: String::new(), uv_path: String::new() };
         let log = RunLog::new(&config).unwrap();
+        log.record("run", "log", &json!({"outputLineId":"stream:0","closed":false,"message":"10%"}));
+        log.record("run", "log", &json!({"message":"ordinary log"}));
+        log.record("run", "log", &json!({"outputLineId":"stream:0","closed":true,"message":"20%"}));
         log.record("run", "finished", &json!({"status":"cancelled"}));
         log.finish().unwrap(); drop(log);
         let file = fs::read_dir(root.join("logs")).unwrap().next().unwrap().unwrap().path();
-        let event: Value = serde_json::from_str(fs::read_to_string(file).unwrap().trim()).unwrap();
-        assert_eq!(event["payload"]["status"], "cancelled");
+        let contents = fs::read_to_string(file).unwrap();
+        let events: Vec<Value> = contents.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0]["payload"]["message"], "ordinary log");
+        assert_eq!(events[1]["payload"]["message"], "20%");
+        assert_eq!(events[2]["payload"]["status"], "cancelled");
         fs::write(root.join("logs/keep.txt"), "keep").unwrap();
         assert_eq!(clear(&config).unwrap(), 1);
         assert!(root.join("logs/keep.txt").exists());
